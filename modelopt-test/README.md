@@ -50,6 +50,8 @@ Paste back the printed `modelopt` / `tensorrt_llm` versions or any install error
 
 Uses public `cnn_dailymail` calibration data (ModelOpt's default `cnn_nemotron_v2_mix` requires gated Nemotron v2 access on HuggingFace).
 
+`run_quant.sh` passes `--moe_calib_experts_ratio 1.0` by default so **all MoE experts** see calibration tokens (same intent as llm-compressor `moe_calibrate_all_experts: true`). Without this, Qwen3's sparse top-k routing leaves many experts with zero `amax`; export may still succeed via weight fallbacks, but quantization quality on cold experts is poor.
+
 ```bash
 cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash run_quant.sh
@@ -57,12 +59,25 @@ bash run_quant.sh
 
 Override dataset if needed: `CALIB_DATASET=wikitext bash run_quant.sh`
 
+**Current run (sparse routing):** If you already finished calibration without `moe_calib_experts_ratio`, pass Gate A export with the existing calib cache — accuracy is not trusted, but the binary checkpoint test is still valid:
+
+```bash
+# Sync repo (export patches in modelopt/torch/export/*.py), then:
+bash run_export_only.sh
+```
+
 After calibration (before export), `hf_ptq.py` saves
 `<export_path>/.modelopt_calib_checkpoint.pth` (~full model state). If export fails,
 retry export only (minutes, not hours):
 
 ```bash
 bash run_export_only.sh
+```
+
+Re-quant with full expert coverage (for a fair accuracy comparison vs llm-compressor):
+
+```bash
+bash run_quant.sh   # now includes moe_calib_experts_ratio=1.0 by default
 ```
 
 Or Slurm:
@@ -99,3 +114,4 @@ bash /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/run_control_int4.s
 
 - Deploy target is **TensorRT-LLM only** (not vLLM).
 - TRT-LLM matrix lists **W4A8 AWQ for Qwen-2/2.5 but not Qwen-3**; this test checks empirically.
+- **MoE calibration:** `MOE_CALIB_EXPERTS_RATIO=1.0` (default) matches llm-compressor's calibrate-all-experts behavior. Lower values mirror inference top-k and can leave expert quantizers uncalibrated.

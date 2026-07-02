@@ -23,6 +23,39 @@ import torch
 import torch.nn as nn
 
 
+def _weight_quantizer_needs_amax_fallback(quantizer) -> bool:
+    """True when export should derive amax from weights (uncalibrated expert)."""
+    from modelopt.torch.quantization.nn import SequentialQuantizer
+
+    if isinstance(quantizer, SequentialQuantizer):
+        return any(_weight_quantizer_needs_amax_fallback(q) for q in quantizer)
+    if not getattr(quantizer, "is_enabled", False):
+        return False
+    if not hasattr(quantizer, "_amax") or quantizer._amax is None:
+        return True
+    return bool(torch.all(quantizer._amax == 0))
+
+
+def _recalibrate_weight_amax_from_tensor(quantizer, weight: torch.Tensor) -> None:
+    """Populate amax from a weight tensor when calibration left a zero/wrong-shape placeholder."""
+    from modelopt.torch.quantization.model_calib import (
+        enable_stats_collection,
+        finish_stats_collection,
+    )
+    from modelopt.torch.quantization.nn import SequentialQuantizer
+
+    if isinstance(quantizer, SequentialQuantizer):
+        for q in quantizer:
+            _recalibrate_weight_amax_from_tensor(q, weight)
+        return
+    if not _weight_quantizer_needs_amax_fallback(quantizer):
+        return
+    quantizer.reset_amax()
+    enable_stats_collection(quantizer)
+    quantizer(weight)
+    finish_stats_collection(quantizer)
+
+
 def _alias_per_expert_subtree_from_prior(module: nn.Module, prior: nn.Module, n: int) -> None:
     """Build per-expert subtree on ``module`` by aliasing ``prior``'s packed buffers.
 
@@ -168,16 +201,8 @@ def _export_fused_experts(
         # Non-gated experts have no gate/up fusion, so this shared-amax step is
         # skipped — their single up_proj uses the generic per-projection fallback.
         first_proj_q = first_proj_weight_quantizers[idx]
-        if (
-            is_gated
-            and getattr(first_proj_q, "is_enabled", False)
-            and (
-                not hasattr(first_proj_q, "_amax")
-                or first_proj_q._amax is None
-                or torch.all(first_proj_q._amax == 0)
-            )
-        ):
-            first_proj_q.amax = first_proj[idx].abs().amax().to(torch.float32)
+        if is_gated and _weight_quantizer_needs_amax_fallback(first_proj_q):
+            _recalibrate_weight_amax_from_tensor(first_proj_q, first_proj[idx])
             warnings.warn(
                 f"Expert {idx} gate_up_proj weight quantizer was not calibrated "
                 f"(amax missing or zero). Using fused-tensor amax as fallback "
@@ -249,16 +274,8 @@ def _export_fused_experts(
                     )
 
             # If the weight quantizer was never calibrated, compute amax from weights.
-            if (
-                hasattr(w_quantizer, "is_enabled")
-                and w_quantizer.is_enabled
-                and (
-                    not hasattr(w_quantizer, "_amax")
-                    or w_quantizer._amax is None
-                    or torch.all(w_quantizer._amax == 0)
-                )
-            ):
-                w_quantizer.amax = weight_slice.abs().amax().to(torch.float32)
+            if _weight_quantizer_needs_amax_fallback(w_quantizer):
+                _recalibrate_weight_amax_from_tensor(w_quantizer, weight_slice)
                 warnings.warn(
                     f"Expert {idx} {proj_name} weight quantizer was not calibrated "
                     f"(amax missing or zero). Using weight-derived amax as fallback. "
