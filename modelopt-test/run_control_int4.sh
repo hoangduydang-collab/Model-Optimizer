@@ -12,9 +12,8 @@ bash "${SCRIPT_DIR}/run_quant.sh"
 
 echo ""
 echo "=== Control deploy (paste output back) ==="
-source /mnt/nfs/hoangduy/env.sh
-export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
-source /mnt/nfs/hoangduy/venvs/modelopt/bin/activate
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_env.sh"
 
 python "${SCRIPT_DIR}/deploy_trtllm.py" \
   --checkpoint_dir "$EXPORT_PATH" \

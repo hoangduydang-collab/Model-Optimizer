@@ -17,9 +17,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-source /mnt/nfs/hoangduy/env.sh
-export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
-source /mnt/nfs/hoangduy/venvs/modelopt/bin/activate
+# shellcheck disable=SC1091
+source "${TEST_DIR}/_env.sh"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq}"
 TP="${TP:-2}"

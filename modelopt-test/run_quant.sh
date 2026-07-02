@@ -4,13 +4,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_env.sh"
+
 MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 HF_PTQ_DIR="${MODEL_OPT_REPO}/examples/hf_ptq"
-
-source /mnt/nfs/hoangduy/env.sh
-export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
-# shellcheck disable=SC1091
-source /mnt/nfs/hoangduy/venvs/modelopt/bin/activate
 
 MODEL="${MODEL:-Qwen/Qwen3-30B-A3B}"
 QFORMAT="${QFORMAT:-w4a8_awq}"
