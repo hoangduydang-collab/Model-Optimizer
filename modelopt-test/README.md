@@ -47,10 +47,14 @@ Paste back the printed `modelopt` / `tensorrt_llm` versions or any install error
 
 ## Step 2 — Gate A: quantize (GPU)
 
+Uses public `cnn_dailymail` calibration data (ModelOpt's default `cnn_nemotron_v2_mix` requires gated Nemotron v2 access on HuggingFace).
+
 ```bash
 cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash run_quant.sh
 ```
+
+Override dataset if needed: `CALIB_DATASET=wikitext bash run_quant.sh`
 
 Or Slurm:
 
