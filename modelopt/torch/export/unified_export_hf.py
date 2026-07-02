@@ -445,7 +445,14 @@ def requantize_resmooth_fused_llm_layers(model: torch.nn.Module):
             quantization_format is not QUANTIZATION_NONE
             and ("awq" in quantization_format or quantization_format == QUANTIZATION_NVFP4_SVDQUANT)
         ):
-            # update_experts_avg_prequant_scale(module)
+            # Fused MoE (Qwen3MoeExperts, MixtralExperts, etc.): _QuantFusedExperts
+            # uses shared input quantizers per projection; per-expert unpacking
+            # happens in _export_fused_experts. get_experts_list() expects ModuleList
+            # experts and fails with len() on QuantQwen3MoeExperts.
+            experts = module.experts
+            first_proj_attr = getattr(experts, "_first_proj_attr", "gate_up_proj")
+            if hasattr(experts, f"{first_proj_attr}_weight_quantizers"):
+                continue
             grouped_experts = get_experts_list(module, model_type)
             for modules in grouped_experts:
                 with fsdp2_aware_weight_update(model, modules):
