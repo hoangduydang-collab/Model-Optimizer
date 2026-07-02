@@ -43,4 +43,6 @@ python hf_ptq.py \
 
 echo "=== Gate A DONE ==="
 echo "checkpoint: $EXPORT_PATH"
+echo "calib cache: $EXPORT_PATH/.modelopt_calib_checkpoint.pth (for export-only retry)"
 echo "Next: python ${SCRIPT_DIR}/inspect_ckpt.py $EXPORT_PATH"
+echo "Export-only retry: bash ${SCRIPT_DIR}/run_export_only.sh"

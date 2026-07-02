@@ -95,6 +95,49 @@ from modelopt.torch.utils.vlm_dataset_utils import get_vlm_dataset_dataloader
 
 RAND_SEED = 1234
 
+# Full calibrated model (weights + quantizer state) for export-only retries after a failed export.
+CALIB_CHECKPOINT_BASENAME = ".modelopt_calib_checkpoint.pth"
+
+
+def get_calib_checkpoint_path(export_path: str | Path) -> Path:
+    return Path(export_path) / CALIB_CHECKPOINT_BASENAME
+
+
+def save_calib_checkpoint(model: torch.nn.Module, export_path: str | Path) -> Path:
+    """Persist calibrated weights and ModelOpt state so export can be retried without re-calib."""
+    path = get_calib_checkpoint_path(export_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Saving post-calibration checkpoint to {path} (for --export_only retries)...")
+    mto.save(model, path)
+    print(f"Saved calibration checkpoint: {path}")
+    return path
+
+
+def restore_calib_checkpoint(model: torch.nn.Module, export_path: str | Path) -> torch.nn.Module:
+    path = get_calib_checkpoint_path(export_path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Calibration checkpoint not found: {path}. "
+            "Run hf_ptq without --export_only first (saves checkpoint by default)."
+        )
+    print(f"Restoring calibrated model from {path}...")
+    restored = mto.restore(model, path)
+    print(f"Restored calibration checkpoint from {path}")
+    return restored
+
+
+def _sync_vl_language_model(
+    full_model: torch.nn.Module,
+    language_model: torch.nn.Module,
+    is_nemotron_vl_model: bool,
+) -> torch.nn.Module:
+    if not is_nemotron_vl_model:
+        return language_model
+    language_model_lineage = get_language_model_from_vl(full_model)
+    if language_model_lineage is not None:
+        language_model_lineage[-2].language_model = language_model
+    return language_model
+
 
 def _kv_cfg_uses_constant_amax(kv_quant_cfg: list[dict[str, Any]]) -> bool:
     """Return True if this KV cfg pins ``use_constant_amax`` on the bmm quantizer.
@@ -1000,6 +1043,33 @@ def quantize_main(
     default_pad_token,
     device: torch.device,
 ):
+    is_nemotron_vl_model = is_nemotron_vl(full_model)
+
+    if args.export_only:
+        if args.auto_quantize_bits is not None:
+            raise ValueError("--export_only is not supported with --auto_quantize_bits.")
+        language_model = restore_calib_checkpoint(language_model, args.export_path)
+        language_model = _sync_vl_language_model(
+            full_model, language_model, is_nemotron_vl_model
+        )
+        post_quantize(
+            args,
+            full_model,
+            language_model,
+            model_type,
+            tokenizer,
+            processor,
+            None,
+            None,
+            None,
+            is_nemotron_vl_model,
+            None,
+            default_padding_side,
+            default_pad_token,
+            None,
+        )
+        return
+
     # Load the recipe up front so we can detect layerwise calibration before batch-size probing.
     recipe = None
     if args.recipe is not None and not args.auto_quantize_bits:
@@ -1075,9 +1145,6 @@ def quantize_main(
     calib_dataloader, first_text_speech_dataset = make_calib_dataloader(
         args, language_model, processor, tokenizer, device, model_type
     )
-
-    # Detect if this is a Nemotron VL model using architecture-based detection
-    is_nemotron_vl_model = is_nemotron_vl(full_model)
 
     preview_input_ids, preview_attention_mask, generated_ids_before_ptq = pre_quantize(
         args, full_model, model_type, tokenizer, calib_dataloader, is_nemotron_vl_model
@@ -1185,6 +1252,9 @@ def quantize_main(
         source_ckpt_dir = _resolve_model_path(args.pyt_ckpt_path, args.trust_remote_code)
         apply_cast_mxfp4_to_nvfp4(language_model, source_ckpt_dir)
 
+    if args.save_calib_checkpoint and is_quantized(language_model):
+        save_calib_checkpoint(language_model, args.export_path)
+
     post_quantize(
         args,
         full_model,
@@ -1256,6 +1326,23 @@ def parse_args() -> argparse.Namespace:
         default=512,
     )
     parser.add_argument("--export_path", default="exported_model")
+    parser.add_argument(
+        "--export_only",
+        action="store_true",
+        help=(
+            "Skip calibration and restore "
+            f"{CALIB_CHECKPOINT_BASENAME} from --export_path, then run export only."
+        ),
+    )
+    parser.add_argument(
+        "--save_calib_checkpoint",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            f"After calibration, save {CALIB_CHECKPOINT_BASENAME} under --export_path "
+            "so a failed export can be retried with --export_only (default: on)."
+        ),
+    )
     parser.add_argument(
         "--dataset",
         help=(
@@ -1496,6 +1583,9 @@ def parse_args() -> argparse.Namespace:
             "--low_memory_mode does not yet support --recipe; the low-memory loader still "
             "initializes quantizers from --qformat/--kv_cache_qformat."
         )
+
+    if args.export_only and args.low_memory_mode:
+        parser.error("--export_only is not compatible with --low_memory_mode.")
 
     return args
 

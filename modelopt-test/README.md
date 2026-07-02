@@ -10,6 +10,7 @@ Lives inside the **Model-Optimizer** repo (`modelopt-test/`) so you can `git pus
 Model-Optimizer/modelopt-test/
   setup_env.sh
   run_quant.sh
+  run_export_only.sh   # retry export without re-calib (needs .modelopt_calib_checkpoint.pth)
   inspect_ckpt.py
   deploy_trtllm.py
   run_control_int4.sh
@@ -55,6 +56,14 @@ bash run_quant.sh
 ```
 
 Override dataset if needed: `CALIB_DATASET=wikitext bash run_quant.sh`
+
+After calibration (before export), `hf_ptq.py` saves
+`<export_path>/.modelopt_calib_checkpoint.pth` (~full model state). If export fails,
+retry export only (minutes, not hours):
+
+```bash
+bash run_export_only.sh
+```
 
 Or Slurm:
 
