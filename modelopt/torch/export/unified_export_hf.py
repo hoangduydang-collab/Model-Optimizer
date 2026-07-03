@@ -107,8 +107,29 @@ from .quant_utils import (
     sync_tied_input_amax,
     to_quantized_weight,
 )
+from .trtllm_w4a8_moe import (
+    postprocess_state_dict_for_trtllm_w4a8_moe,
+    state_dict_has_moe_experts,
+)
 
 __all__ = ["export_hf_checkpoint", "export_speculative_decoding"]
+
+
+def _should_postprocess_for_trtllm_w4a8_moe(
+    model: nn.Module,
+    state_dict: dict[str, Any],
+    *,
+    export_target: str,
+) -> bool:
+    if export_target == "hf":
+        return False
+    if export_target not in ("auto", "tensorrt_llm"):
+        raise ValueError(
+            f"Unsupported export_target={export_target!r}; use 'auto', 'hf', or 'tensorrt_llm'."
+        )
+    if get_quantization_format(model) != QUANTIZATION_W4A8_AWQ:
+        return False
+    return state_dict_has_moe_experts(state_dict)
 
 
 def _is_enabled_quantizer(quantizer):
@@ -1083,6 +1104,12 @@ def _export_transformers_checkpoint(
         quantized_state_dict, kv_cache_max_bound, kv_cache_format, is_modelopt_qlora
     )
 
+    export_target = kwargs.get("export_target", "auto")
+    if _should_postprocess_for_trtllm_w4a8_moe(
+        model, quantized_state_dict, export_target=export_target
+    ):
+        quantized_state_dict = postprocess_state_dict_for_trtllm_w4a8_moe(quantized_state_dict)
+
     return quantized_state_dict, quant_config
 
 
@@ -1435,9 +1462,11 @@ def export_hf_checkpoint(
             to export. If None, all quantized components are exported.
         extra_state_dict: Extra state dictionary to add to the exported model.
         max_shard_size: Maximum size of each safetensors shard file. Defaults to "10GB".
-        **kwargs: Runtime-specific post-processing options forwarded to
-            :func:`_postprocess_safetensors` for diffusion model exports.
-            See its docstring for supported keys.
+        **kwargs: Additional options:
+            export_target (str): ``"auto"`` (default), ``"hf"``, or ``"tensorrt_llm"``.
+                When ``auto`` or ``tensorrt_llm``, W4A8_AWQ MoE exports include TRT-LLM
+                ``W4A8_CUSTOM`` scale layout (``weight_scale_inv``, fused ``input_scale``).
+            Other kwargs are forwarded to :func:`_postprocess_safetensors` for diffusion exports.
     """
     export_dir = Path(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)

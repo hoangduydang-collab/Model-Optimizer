@@ -95,9 +95,9 @@ python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/inspect_ckpt.py 
 
 ## Step 4 — Gate C: TensorRT-LLM deploy (2 GPUs)
 
-Gate C uses **TRT-LLM CUSTOM_W4A8** MoE loading for folded ModelOpt AWQ (no
-``pre_quant_scale``). ``deploy_trtllm.py`` patches ``create_moe`` and rewrites
-expert scale keys (``weight_scale_inv``, fused ``input_scale``) automatically.
+W4A8_AWQ MoE checkpoints are exported with TRT-LLM ``W4A8_CUSTOM`` scale layout
+(``weight_scale_inv``, fused ``input_scale``). ``setup_env.sh`` patches installed
+TensorRT-LLM so Qwen MoE selects ``W4A8_CUSTOM`` (same as DeepSeek V3).
 
 ```bash
 python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/deploy_trtllm.py \
@@ -106,13 +106,11 @@ python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/deploy_trtllm.py
   --prompt "The capital of France is"
 ```
 
-To rewrite an existing export without redeploying:
+For checkpoints exported **before** this integration, rewrite scales once:
 
 ```bash
 python modelopt-test/trtllm_w4a8_moe_custom.py /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq --force
 ```
-
-Use `--force` if a prior rewrite left mismatched tied ``gate_proj``/``up_proj`` ``input_scale`` pairs.
 
 Or: `sbatch modelopt-test/slurm/deploy.sbatch` (from repo root).
 

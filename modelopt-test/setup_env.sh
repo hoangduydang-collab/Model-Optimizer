@@ -69,8 +69,22 @@ print("tensorrt_llm:", tensorrt_llm.__version__)
 print("import OK")
 PY
 
-echo "=== installing TRT-LLM MPI worker patch (.pth) ==="
-python -c "import sys; sys.path.insert(0, '${SCRIPT_DIR}'); from trtllm_w4a8_moe_custom import install_mpi_worker_patch; print(install_mpi_worker_patch())"
+echo "=== applying TRT-LLM Qwen MoE W4A8_CUSTOM patches ==="
+python - <<'PY'
+import site
+from pathlib import Path
+
+# Remove legacy runtime import-hook bootstrap if present.
+legacy = Path(site.getsitepackages()[0]) / "modelopt_trtllm_w4a8_custom.pth"
+if legacy.exists():
+    legacy.unlink()
+    print(f"Removed legacy hook: {legacy}")
+
+from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
+
+patched = apply_trtllm_qwen_moe_patches()
+print(patched or "already patched")
+PY
 
 echo "=== done ==="
 echo "Activate with: source ${MODELOPT_VENV}/bin/activate"

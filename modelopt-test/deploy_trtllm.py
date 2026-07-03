@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -63,19 +62,13 @@ def main() -> int:
 
     quant_summary = _load_quant_summary(ckpt)
     if quant_summary.get("quant_algo") == "W4A8_AWQ":
-        os.environ["MODELOPT_TRTLLM_W4A8_AWQ_MOE"] = "1"
+        from modelopt.torch.export.trtllm_w4a8_moe import rewrite_checkpoint_for_trtllm_w4a8_custom
 
-    from trtllm_w4a8_moe_custom import (
-        apply_trtllm_w4a8_custom_patches,
-        install_mpi_worker_patch,
-        prepare_checkpoint_and_runtime,
-    )
-
-    try:
-        prepare_checkpoint_and_runtime(ckpt)
-    except Exception as exc:
-        print(f"FAIL: checkpoint prep raised {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 1
+        try:
+            rewrite_checkpoint_for_trtllm_w4a8_custom(ckpt)
+        except Exception as exc:
+            print(f"FAIL: checkpoint prep raised {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
 
     try:
         import torch
@@ -88,6 +81,7 @@ def main() -> int:
 
     try:
         from modelopt.deploy.llm import LLM
+        from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
     except ImportError as exc:
         print(
             "ERROR: cannot import modelopt.deploy.llm (need tensorrt_llm + mpi4py):",
@@ -101,11 +95,16 @@ def main() -> int:
         return 1
 
     try:
-        pth = install_mpi_worker_patch()
-        apply_trtllm_w4a8_custom_patches()
-        print(f"TRT-LLM W4A8_CUSTOM MoE patch installed ({pth.name}) + applied in parent")
-    except ImportError as exc:
-        print(f"FAIL: W4A8_CUSTOM runtime patch: {exc}", file=sys.stderr)
+        patched = apply_trtllm_qwen_moe_patches()
+        if patched:
+            print("TRT-LLM Qwen MoE W4A8_CUSTOM patches applied:")
+            for path in patched:
+                print(f"  {path}")
+        else:
+            print("TRT-LLM Qwen MoE W4A8_CUSTOM patches already present")
+    except Exception as exc:
+        print(f"FAIL: TRT-LLM patch raised {type(exc).__name__}: {exc}", file=sys.stderr)
+        print("Hint: re-run modelopt-test/setup_env.sh after upgrading tensorrt-llm.", file=sys.stderr)
         return 1
 
     try:
