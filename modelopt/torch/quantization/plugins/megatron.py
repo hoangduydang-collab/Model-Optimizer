@@ -307,7 +307,7 @@ def megatron_replace_quant_module_hook(model: torch.nn.Module):
             _register_extra_state_callbacks(module)
 
 
-CUSTOM_MODEL_PLUGINS.add(megatron_replace_quant_module_hook)
+CUSTOM_MODEL_PLUGINS.append(megatron_replace_quant_module_hook)
 
 
 class _MegatronParallelLinear(_ParallelLinear):

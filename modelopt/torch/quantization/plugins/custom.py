@@ -28,7 +28,7 @@ from ..nn import NVFP4StaticQuantizer, QuantModule, SequentialQuantizer, TensorQ
 from ..nn.modules.quant_linear import _QuantLinear
 from ..utils import multi_context, replace_function
 
-CUSTOM_MODEL_PLUGINS = set()
+CUSTOM_MODEL_PLUGINS: list[Callable] = []
 CUSTOM_POST_CONVERSION_PLUGINS = set()
 
 
@@ -36,7 +36,18 @@ CUSTOM_POST_CONVERSION_PLUGINS = set()
 # In future implement a decorator to register methods updating QUANT_MODULE on the fly
 def register_custom_model_plugins_on_the_fly(model):
     """Registers custom modules as QUANT_MODULE on the fly."""
-    for callback in CUSTOM_MODEL_PLUGINS:
+    ordered = sorted(
+        CUSTOM_MODEL_PLUGINS,
+        key=lambda fn: (
+            0
+            if fn.__name__
+            in ("register_fused_experts_on_the_fly", "force_eager_experts_impl_on_the_fly")
+            else 1
+            if fn.__name__ == "register_sparse_moe_on_the_fly"
+            else 0
+        ),
+    )
+    for callback in ordered:
         callback(model)
 
 

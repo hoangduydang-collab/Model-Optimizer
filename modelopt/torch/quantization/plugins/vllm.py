@@ -185,7 +185,7 @@ def vllm_replace_quant_module_hook(model: torch.nn.Module) -> None:
             m.device, m.dtype = _get_device_dtype(m)
 
 
-CUSTOM_MODEL_PLUGINS.add(vllm_replace_quant_module_hook)
+CUSTOM_MODEL_PLUGINS.append(vllm_replace_quant_module_hook)
 
 
 def _vllm_attention_modelopt_post_restore(self) -> None:

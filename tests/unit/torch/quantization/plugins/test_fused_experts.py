@@ -34,6 +34,7 @@ from modelopt.torch.quantization.plugins.huggingface import (
     _fused_experts_wrapper_class,
     _is_fused_experts_module,
     _is_sparse_sequaential_moe_block,
+    _looks_like_fused_moe_experts,
     _QuantFusedExperts,
     _QuantNonGatedFusedExperts,
     force_eager_experts_impl_on_the_fly,
@@ -252,6 +253,20 @@ class TestIsFusedExpertsModule:
         block.experts = _IterableFusedExperts()
         assert _is_sparse_sequaential_moe_block(block) is False
         assert _is_fused_experts_module(block.experts) is True
+
+    def test_qwen3_like_fused_experts_not_sparse_even_with_gate_router(self):
+        """Regression: nn.Module.__iter__ must not make fused Qwen3MoE look sequential."""
+        experts = nn.Module()
+        experts.num_experts = NUM_EXPERTS
+        experts.gate_up_proj = nn.Parameter(torch.randn(NUM_EXPERTS, 2 * INTERMEDIATE_DIM, HIDDEN_DIM))
+        experts.down_proj = nn.Parameter(torch.randn(NUM_EXPERTS, HIDDEN_DIM, INTERMEDIATE_DIM))
+
+        block = nn.Module()
+        block.gate = _SyntheticTopKRouter()
+        block.experts = experts
+
+        assert _looks_like_fused_moe_experts(experts) is True
+        assert _is_sparse_sequaential_moe_block(block) is False
 
 
 # ---------------------------------------------------------------------------

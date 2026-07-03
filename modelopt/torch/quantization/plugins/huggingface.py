@@ -1543,6 +1543,24 @@ def _has_num_experts(obj):
     return hasattr(obj, "num_experts") or hasattr(obj, "n_routed_experts")
 
 
+def _looks_like_fused_moe_experts(module) -> bool:
+    """Return True for stacked 3-D MoE expert containers (Qwen3/Mixtral v5, etc.).
+
+    ``nn.Module`` is always iterable over child modules, so sparse detection must not
+    use ``hasattr(experts, "__iter__")`` — that mis-classifies fused ``Qwen3MoeExperts``.
+    """
+    if _is_fused_experts_module(module):
+        return True
+    if hasattr(module, "gate_up_proj"):
+        return True
+    # Fused containers expose num_experts + down_proj but are not per-expert ModuleLists.
+    return (
+        hasattr(module, "num_experts")
+        and hasattr(module, "down_proj")
+        and not isinstance(module, nn.ModuleList)
+    )
+
+
 def _is_sparse_sequaential_moe_block(module):
     """Check if a module is structurally a sparse sequential MoE block compatible with _QuantSparseSequentialMoe.
 
@@ -1557,15 +1575,13 @@ def _is_sparse_sequaential_moe_block(module):
     if not hasattr(module, "experts"):
         return False
 
-    if not hasattr(module.experts, "__iter__"):
-        # transformers>=5.0 has batched experts, no per-expert quantizers
+    experts = module.experts
+
+    if _looks_like_fused_moe_experts(experts):
         return False
 
-    # Fused 3-D expert containers (gate_up_proj + down_proj) are wrapped by
-    # _QuantFusedExperts on the experts submodule. Do not also register the
-    # parent MoE block as _QuantSparseSequentialMoe — newer transformers makes
-    # fused experts iterable for indexing, which would otherwise mis-detect.
-    if _is_fused_experts_module(module.experts):
+    # Sparse sequential MoE uses a per-expert ``nn.ModuleList`` (v4-style), not fused 3-D tensors.
+    if not isinstance(experts, nn.ModuleList):
         return False
 
     # Primary: gate sub-module has topk/top_k + num_experts (standard TopKRouter pattern)
@@ -1936,7 +1952,7 @@ def _reconstruct_fused_moe_linear(model: nn.Module) -> None:
         del module.experts
 
 
-CUSTOM_MODEL_PLUGINS.update(
+CUSTOM_MODEL_PLUGINS.extend(
     [
         register_falcon_linears_on_the_fly,
         register_dbrx_moe_on_the_fly,
