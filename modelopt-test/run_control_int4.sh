@@ -13,7 +13,7 @@ bash "${SCRIPT_DIR}/run_quant.sh"
 echo ""
 echo "=== Control deploy (paste output back) ==="
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/_env.sh"
+source "${SCRIPT_DIR}/_env_deploy.sh"
 
 python "${SCRIPT_DIR}/deploy_trtllm.py" \
   --checkpoint_dir "$EXPORT_PATH" \

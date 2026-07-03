@@ -2,164 +2,126 @@
 
 Binary pass/fail: can ModelOpt `w4a8_awq` quantize **Qwen3-30B-A3B** and can **TensorRT-LLM** (PyTorch backend) load it and return sane text?
 
-Lives inside the **Model-Optimizer** repo (`modelopt-test/`) so you can `git push` / `git pull` on the cluster.
+Lives inside the **Model-Optimizer** repo (`modelopt-test/`) so the team can `git push` / `git pull` on the cluster.
 
 ## Layout
 
 ```
 Model-Optimizer/modelopt-test/
-  setup_env.sh
+  setup_env.sh           # creates both venvs
+  setup_env_quant.sh     # Gate A only (.venv-quant)
+  setup_env_deploy.sh    # Gate C only (.venv-deploy)
+  _env_quant.sh          # activate quant venv
+  _env_deploy.sh         # activate deploy venv
   run_quant.sh
-  run_export_only.sh   # retry export without re-calib (needs .modelopt_calib_checkpoint.pth)
-  upgrade_deploy_env.sh  # pin transformers 5.x + patch TRT-LLM 1.2.1 for deploy
+  run_export_only.sh
   inspect_ckpt.py
   deploy_trtllm.py
-  run_control_int4.sh
+  upgrade_deploy_env.sh  # refresh deploy venv only
   slurm/quant.sbatch
   slurm/deploy.sbatch
 ```
 
+## Dual venv (recommended)
+
+ModelOpt quant/export needs **transformers 5.x** (fused `Qwen3MoeExperts`). TRT-LLM 1.2.1 pins **transformers 4.57.3**. Use **two venvs**; the **exported checkpoint** is the contract between them.
+
+| Venv | Path | Used for | `transformers` |
+|------|------|----------|----------------|
+| Quant | `.venv-quant` | Gate A: calib, export, restore | **≥ 5.0** |
+| Deploy | `.venv-deploy` | Gate C: TRT-LLM load + generate | **4.57.3** |
+
 ## Prerequisites
 
-- This repo on the cluster, e.g. `/mnt/nfs/hoangduy/projects/Model-Optimizer` (duy-branch)
-- `Qwen/Qwen3-30B-A3B` in HF cache (from the llm-compressor run)
+- Repo on cluster: `/mnt/nfs/hoangduy/projects/Model-Optimizer` (`duy-branch`)
+- `Qwen/Qwen3-30B-A3B` in HF cache
 
-**Cluster note:** bare `pip` is not on PATH. Use `bash setup_env.sh` (runs `uv pip`) or after `source modelopt-test/_env.sh` use `uv pip` / `python -m pip` — never `pip install` alone.
+**Cluster note:** use `"$UV" pip` after `source /mnt/nfs/hoangduy/env.sh` — bare `pip` is not on PATH.
 
-Scripts resolve the repo root automatically (`modelopt-test/..`). The venv is **project-local** at `Model-Optimizer/.venv` (gitignored) so it does not collide with `venvs/main` from `env.sh`.
-
-## Step 1 — Environment (you)
+## Step 1 — Environment
 
 ```bash
 cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash setup_env.sh
 ```
 
-**Already have a venv but deploy fails on transformers 5.x import?** Run the controlled upgrade (keeps TRT-LLM 1.2.1 on CUDA 12, pins transformers 5.x, patches TRT-LLM in-place):
+Or separately:
 
 ```bash
-bash modelopt-test/upgrade_deploy_env.sh
+bash setup_env_quant.sh    # Gate A
+bash setup_env_deploy.sh   # Gate C
 ```
 
-Creates or reuses `<repo>/.venv`. **Default setup is deploy-only** (TensorRT-LLM + patches; skips `hf_ptq` / `flash-attn` so torch is not upgraded to an incompatible CUDA 13 stack).
-
-```bash
-bash setup_env.sh
-```
-
-For Gate A quantization (adds `hf_ptq` deps without upgrading torch):
-
-```bash
-INSTALL_HF_PTQ=1 bash setup_env.sh
-```
-
-If your venv is broken (wrong torch/CUDA), recreate:
+Recreate from scratch:
 
 ```bash
 RECREATE_VENV=1 bash setup_env.sh
 ```
 
-For later sessions:
+**Activate for manual work:**
 
 ```bash
-source /mnt/nfs/hoangduy/projects/Model-Optimizer/.venv/bin/activate
+source modelopt-test/_env_quant.sh   # quant / export
+source modelopt-test/_env_deploy.sh  # TRT-LLM deploy
 ```
 
-Paste back the printed `modelopt` / `tensorrt_llm` versions or any install error.
+Legacy single `.venv` is deprecated (`MODELOPT_PROFILE=legacy source _env.sh`).
 
-## Step 2 — Gate A: quantize (GPU)
+## Step 2 — Gate A: quantize (GPU, quant venv)
 
-Uses public `cnn_dailymail` calibration data (ModelOpt's default `cnn_nemotron_v2_mix` requires gated Nemotron v2 access on HuggingFace).
-
-`run_quant.sh` passes `--moe_calib_experts_ratio 1.0` by default so **all MoE experts** see calibration tokens (same intent as llm-compressor `moe_calibrate_all_experts: true`). Without this, Qwen3's sparse top-k routing leaves many experts with zero `amax`; export may still succeed via weight fallbacks, but quantization quality on cold experts is poor.
+`run_quant.sh` sources `_env_quant.sh` automatically.
 
 ```bash
 cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash run_quant.sh
 ```
 
-Override dataset if needed: `CALIB_DATASET=wikitext bash run_quant.sh`
+`moe_calib_experts_ratio=1.0` by default (all experts see calib tokens).
 
-**Current run (sparse routing):** If you already finished calibration without `moe_calib_experts_ratio`, pass Gate A export with the existing calib cache — accuracy is not trusted, but the binary checkpoint test is still valid:
-
-```bash
-# Sync repo (export patches in modelopt/torch/export/*.py), then:
-bash run_export_only.sh
-```
-
-After calibration (before export), `hf_ptq.py` saves
-`<export_path>/.modelopt_calib_checkpoint.pth` (~full model state). If export fails,
-retry export only (minutes, not hours):
+Export-only retry (uses quant venv):
 
 ```bash
 bash run_export_only.sh
 ```
 
-Re-quant with full expert coverage (for a fair accuracy comparison vs llm-compressor):
-
-```bash
-bash run_quant.sh   # now includes moe_calib_experts_ratio=1.0 by default
-```
-
-Or Slurm:
-
-```bash
-sbatch /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/slurm/quant.sbatch
-```
+Slurm: `sbatch modelopt-test/slurm/quant.sbatch`
 
 ## Step 3 — Gate A sanity (no GPU)
 
 ```bash
-python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/inspect_ckpt.py \
-  /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq
+source modelopt-test/_env_quant.sh
+python modelopt-test/inspect_ckpt.py /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq
 ```
 
-## Step 4 — Gate C: TensorRT-LLM deploy (2 GPUs)
-
-W4A8_AWQ MoE checkpoints are exported with TRT-LLM ``W4A8_CUSTOM`` scale layout
-(``weight_scale_inv``, gate/up ``input_scale`` = activation only, down ``input_scale``
-with ``weight_scale_2`` folded in). ``setup_env.sh`` patches installed TensorRT-LLM
-so Qwen MoE selects ``W4A8_CUSTOM`` (same as DeepSeek V3).
+## Step 4 — Gate C: TensorRT-LLM deploy (deploy venv, 2 GPUs)
 
 ```bash
-python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/deploy_trtllm.py \
+source modelopt-test/_env_deploy.sh
+python modelopt-test/deploy_trtllm.py \
   --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
   --tp 2 \
   --prompt "The capital of France is"
 ```
 
-For checkpoints exported **before** this integration, rewrite scales once:
+Slurm: `sbatch modelopt-test/slurm/deploy.sbatch`
 
-```bash
-python modelopt-test/trtllm_w4a8_moe_custom.py /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq --force
-```
+W4A8_CUSTOM scale layout is applied at export; `setup_env_deploy.sh` patches TRT-LLM for Qwen MoE.
 
-If deploy loads but generation is garbage (repeated tokens), the checkpoint likely has
-incorrect gate/up ``input_scale`` (``weight_scale_2`` was wrongly fused into activation
-scale). Re-export from the saved calibration checkpoint (~minutes, no re-calib):
+## Troubleshooting
 
-```bash
-bash modelopt-test/run_export_only.sh
-```
+See `BUGS_AND_FIXES.md` for known issues (MoE detection, scale fusion, restore mismatches).
 
-If export fails with a huge list of ``*_weight_quantizers.*`` keys, sync the latest
-``modelopt/torch/export/quant_utils.py`` export filter fix and retry ``run_export_only.sh``.
-
-If restore fails with ``Unmatched keys in quantizer state_dict`` and you see
-``_QuantSparseSequentialMoe`` / ``56214 quantizers`` instead of ``_QuantFusedExperts`` /
-``13158 quantizers``, sync ``modelopt/torch/quantization/plugins/huggingface.py``
-(fused-experts detection fix) and retry.
-
-Or: `sbatch modelopt-test/slurm/deploy.sbatch` (from repo root).
+- **Restore/export MoE mismatch:** use **quant venv** only; verify `Qwen3MoeExperts` + transformers 5.x.
+- **TRT-LLM import errors:** use **deploy venv** only; run `bash upgrade_deploy_env.sh`.
+- **Garbage generation:** re-export from calib cache (`run_export_only.sh`).
 
 ## Step 5 — Triage if Gate C fails
 
 ```bash
-bash /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/run_control_int4.sh
+bash modelopt-test/run_control_int4.sh
 ```
 
 ## Notes
 
 - Deploy target is **TensorRT-LLM only** (not vLLM).
 - TRT-LLM matrix lists **W4A8 AWQ for Qwen-2/2.5 but not Qwen-3**; this test checks empirically.
-- **MoE calibration:** `MOE_CALIB_EXPERTS_RATIO=1.0` (default) matches llm-compressor's calibrate-all-experts behavior. Lower values mirror inference top-k and can leave expert quantizers uncalibrated.

@@ -12,19 +12,21 @@
 
 ## Quick reference — environment invariants
 
-| Invariant | Required value | Why |
-|-----------|----------------|-----|
-| `transformers` | **≥ 5.0, < 5.13** | Qwen3 MoE uses fused `Qwen3MoeExperts` (3-D tensors). v4.x uses `ModuleList` per-expert layout — **incompatible quantizer state**. |
-| `modelopt` install | **editable** from repo (`pip install -e .[hf]`) | PyPI `nvidia-modelopt` can shadow local fixes; watch for `Multiple distributions found for package modelopt`. |
-| Package installs on cluster | **`"$UV" pip`**, not bare `pip`/`uv` | Source `/mnt/nfs/hoangduy/env.sh` first; `$UV` = `/mnt/nfs/hoangduy/uv/uv`. |
-| Calib ↔ restore ↔ export | **Same `.venv` on NFS** | Shared venv means upgrading/downgrading `transformers` on one node affects all nodes. |
-| MoE sanity check | `Qwen3MoeExperts`, `fused? True`, `sparse? False` | Run before `run_export_only.sh` or restore. |
+| Stage | Env | `transformers` | Setup |
+|-------|-----|----------------|-------|
+| Gate A (quant/export) | `.venv-quant` | **≥ 5.0, < 5.13** | `bash setup_env_quant.sh` |
+| Gate C (TRT-LLM deploy) | `.venv-deploy` | **4.57.3** | `bash setup_env_deploy.sh` |
+| **Contract** | checkpoint dir on NFS | — | Artifact crosses stages |
 
-### MoE layout sanity check
+Activate: `source modelopt-test/_env_quant.sh` or `_env_deploy.sh`.
+
+Legacy single `.venv` + transformers 5.x patches on TRT-LLM is **deprecated** — use dual venv.
+
+### MoE layout sanity check (quant venv only)
 
 ```bash
-source /mnt/nfs/hoangduy/env.sh
-cd ~/projects/Model-Optimizer && source .venv/bin/activate
+source modelopt-test/_env_quant.sh
+cd ~/projects/Model-Optimizer
 
 python -c "
 import transformers
@@ -77,13 +79,13 @@ Inserted 13158 quantizers
 
 Calib `.pth` (58G at `.modelopt_calib_checkpoint.pth`) was built with transformers 5.x fused layout. Restore on h100 with 4.57.3 loaded a different architecture; sparse detection was **correct for ModuleList** but **wrong for the checkpoint**.
 
-Likely trigger: TRT-LLM deploy setup or another install pulled `transformers` back to 4.57.3 in the shared NFS `.venv`.
+Likely trigger: shared single `.venv` on NFS with conflicting `transformers` pins between quant and deploy.
 
 ### Fix
 
 ```bash
-source /mnt/nfs/hoangduy/env.sh
-cd ~/projects/Model-Optimizer && source .venv/bin/activate
+source modelopt-test/_env_quant.sh
+cd ~/projects/Model-Optimizer
 
 "$UV" pip install 'transformers>=5.0,<5.13'
 "$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
@@ -207,7 +209,7 @@ python -c "import modelopt; print(modelopt.__file__)"
 # Expect: /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt/__init__.py
 ```
 
-`setup_env.sh` re-pins editable install after `tensorrt-llm` install for this reason.
+`setup_env_deploy.sh` re-pins editable install after `tensorrt-llm` install for this reason.
 
 ---
 
@@ -222,7 +224,7 @@ python -c "import modelopt; print(modelopt.__file__)"
 python -c "from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches; print(apply_trtllm_qwen_moe_patches())"
 ```
 
-Applied automatically by `modelopt-test/setup_env.sh`.
+Applied automatically by `modelopt-test/setup_env_deploy.sh`.
 
 ---
 
@@ -258,13 +260,13 @@ Applied automatically by `modelopt-test/setup_env.sh`.
 
 ```bash
 cd ~/projects/Model-Optimizer
-source modelopt-test/_env.sh
 
-# Re-export (needs calib .pth + transformers 5.x + fused layout)
+# Gate A (quant venv)
+source modelopt-test/_env_quant.sh
 bash modelopt-test/run_export_only.sh
 
-# Deploy
-python -c "from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches; print(apply_trtllm_qwen_moe_patches())"
+# Gate C (deploy venv)
+source modelopt-test/_env_deploy.sh
 python modelopt-test/deploy_trtllm.py \
   --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
   --tp 2 --prompt "The capital of France is"
@@ -291,15 +293,9 @@ When running `apply_trtllm_qwen_moe_patches()` or `deploy_trtllm.py` after upgra
 
 ### Fix
 
-**Root cause:** TRT-LLM stable wheels hard-import removed transformers 5.x symbols; ModelOpt needs transformers ≥ 5.0 for fused MoE.
+**Long-term (team):** **Dual venv** — `.venv-quant` (transformers 5.x) + `.venv-deploy` (TRT-LLM + transformers 4.57.3). See `setup_env_quant.sh`, `setup_env_deploy.sh`, `_env_quant.sh`, `_env_deploy.sh`.
 
-**Long-term fix (CUDA 12 / H100):** Stay on `tensorrt-llm==1.2.1` (latest CUDA-12 line). Pin `transformers>=5.0,<5.13`. Apply **install-time** patch to TRT-LLM (`modelopt/deploy/trtllm_transformers5_patch.py`) — same pattern as NVIDIA upstream commit 58f7ccb. Run `bash modelopt-test/upgrade_deploy_env.sh`.
-
-**Not viable on Polaris:** `tensorrt-llm>=1.3` requires CUDA 13 / torch cu130; PyPI 1.3.x still pins `transformers==4.57.3`.
-
-**Runtime fallback:** `modelopt/deploy/transformers_compat.py` — only if install-time patch was not applied.
-
-Wired into `setup_env.sh`, `upgrade_deploy_env.sh`, `trtllm_qwen_moe_patch.py`, and `deploy/llm/__init__.py`.
+**Deprecated:** single `.venv` with install-time TRT-LLM transformers-5 patches (`trtllm_transformers5_patch.py`) — only for legacy; do not extend.
 
 **Immediate workaround** (before pulling fix):
 
@@ -327,5 +323,10 @@ transformers.AutoModelForVision2Seq = AutoModelForImageTextToText
 ## Related docs
 
 - `modelopt_migration_assessment.md` — strategic migration assessment (llm-compressor → ModelOpt)
+- `.cursor/rules/team-and-env-strategy.mdc` — team context + dual-venv / container strategy
 - `.cursor/rules/modelopt-qwen3-moe-migration.mdc` — agent memory rule for this workstream
 - `.cursor/rules/cluster-python-uv.mdc` — `$UV` / venv conventions on cluster
+
+## Environment strategy (team)
+
+See `.cursor/rules/team-and-env-strategy.mdc`. **Dual venv** (quant vs deploy) is the recommended local/cluster pattern when TRT-LLM and ModelOpt require incompatible `transformers` pins. **NGC TRT-LLM containers** are NVIDIA’s recommended production deploy path ([installation guide](https://nvidia.github.io/TensorRT-LLM/installation/installation-guide.html)).

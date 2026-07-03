@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Shared cluster env + venv activation for modelopt-test scripts.
 #
-# Venv lives at Model-Optimizer/.venv (gitignored) unless MODELOPT_VENV is set.
-# Intentionally overrides VENV from env.sh (which may point at venvs/main).
+# Dual venv (recommended):
+#   MODELOPT_PROFILE=quant  -> .venv-quant  (Gate A: calib/export)
+#   MODELOPT_PROFILE=deploy -> .venv-deploy (Gate C: TRT-LLM)
+#
+# Convenience wrappers: _env_quant.sh, _env_deploy.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
@@ -10,11 +13,30 @@ MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 source /mnt/nfs/hoangduy/env.sh
 export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
 
-MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv}"
+case "${MODELOPT_PROFILE:-deploy}" in
+  quant)
+    MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv-quant}"
+    SETUP_HINT="bash ${SCRIPT_DIR}/setup_env_quant.sh"
+    ;;
+  deploy)
+    MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv-deploy}"
+    SETUP_HINT="bash ${SCRIPT_DIR}/setup_env_deploy.sh"
+    ;;
+  legacy)
+    MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv}"
+    SETUP_HINT="bash ${SCRIPT_DIR}/setup_env.sh  # migrate to dual venv"
+    ;;
+  *)
+    echo "ERROR: unknown MODELOPT_PROFILE=${MODELOPT_PROFILE} (use quant|deploy|legacy)" >&2
+    exit 1
+    ;;
+esac
+
+export MODELOPT_VENV MODELOPT_PROFILE
 
 if [[ ! -f "${MODELOPT_VENV}/bin/activate" ]]; then
-  echo "ERROR: venv not found at ${MODELOPT_VENV}" >&2
-  echo "Run: bash ${SCRIPT_DIR}/setup_env.sh" >&2
+  echo "ERROR: venv not found: ${MODELOPT_VENV} (profile=${MODELOPT_PROFILE})" >&2
+  echo "Run: ${SETUP_HINT}" >&2
   exit 1
 fi
 
@@ -47,7 +69,6 @@ PY
   fi
 }
 
-# TRT-LLM tp>1 uses mpi4py.futures; on some clusters Open MPI fabric autodetect hangs.
 _export_openmpi_localhost() {
   export OMPI_MCA_oob="${OMPI_MCA_oob:-tcp}"
   export OMPI_MCA_oob_tcp_if_include="${OMPI_MCA_oob_tcp_if_include:-lo}"
@@ -59,4 +80,7 @@ _export_openmpi_localhost() {
 }
 
 _export_nvidia_wheel_libs
-_export_openmpi_localhost
+
+if [[ "${MODELOPT_PROFILE}" == "deploy" ]]; then
+  _export_openmpi_localhost
+fi

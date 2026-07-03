@@ -95,7 +95,7 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            "Hint: source modelopt-test/_env.sh (sets LD_LIBRARY_PATH + Open MPI localhost).",
+            "Hint: source modelopt-test/_env_deploy.sh (sets LD_LIBRARY_PATH + Open MPI localhost).",
             file=sys.stderr,
         )
         return 1
@@ -110,7 +110,7 @@ def main() -> int:
             print("TRT-LLM Qwen MoE W4A8_CUSTOM patches already present")
     except Exception as exc:
         print(f"FAIL: TRT-LLM patch raised {type(exc).__name__}: {exc}", file=sys.stderr)
-        print("Hint: re-run modelopt-test/setup_env.sh after upgrading tensorrt-llm.", file=sys.stderr)
+        print("Hint: re-run modelopt-test/setup_env_deploy.sh after upgrading tensorrt-llm.", file=sys.stderr)
         return 1
 
     try:

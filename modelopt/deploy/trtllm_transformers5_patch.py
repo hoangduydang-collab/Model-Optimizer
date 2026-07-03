@@ -71,6 +71,11 @@ _GET_PARAMETER_DEVICE_LINE_RE = re.compile(
     r"from transformers\.modeling_utils import get_parameter_device, get_parameter_dtype"
 )
 
+_AUTOCFG_REGISTER_LINE_RE = re.compile(
+    r"^(\s*)AutoConfig\.register\(([^)]+)\)\s*$",
+    re.MULTILINE,
+)
+
 
 def _patch_file(path: Path, old: str, new: str) -> bool:
     if not path.is_file():
@@ -104,6 +109,31 @@ def _patch_get_parameter_device_imports(root: Path) -> list[str]:
     return changed
 
 
+def _patch_autoconfig_register_exist_ok(root: Path) -> list[str]:
+    """Transformers 5.x ships configs TRT-LLM re-registers; need exist_ok=True."""
+    marker = TRANSFORMERS5_PATCH_MARKER + " AutoConfig.register exist_ok"
+    changed: list[str] = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if marker in text or "AutoConfig.register(" not in text:
+            continue
+
+        def _repl(match: re.Match[str]) -> str:
+            indent, args = match.group(1), match.group(2)
+            if "exist_ok" in args:
+                return match.group(0)
+            return (
+                f"{indent}{marker}\n"
+                f"{indent}AutoConfig.register({args}, exist_ok=True)"
+            )
+
+        new_text, count = _AUTOCFG_REGISTER_LINE_RE.subn(_repl, text)
+        if count:
+            path.write_text(new_text, encoding="utf-8")
+            changed.append(str(path))
+    return changed
+
+
 def trtllm_transformers5_patch_applied() -> bool:
     """Return True if convert.py already contains the install-time compat patch."""
     try:
@@ -129,6 +159,7 @@ def apply_trtllm_transformers5_compat_patch() -> list[str]:
         changed.append(str(multimodal_path))
 
     changed.extend(_patch_get_parameter_device_imports(root))
+    changed.extend(_patch_autoconfig_register_exist_ok(root))
 
     return changed
 

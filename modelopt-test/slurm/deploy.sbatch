@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # shellcheck disable=SC1091
-source "${TEST_DIR}/_env.sh"
+source "${TEST_DIR}/_env_deploy.sh"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq}"
 TP="${TP:-2}"

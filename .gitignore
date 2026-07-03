@@ -32,6 +32,8 @@ docs/source/reference/generated
 .env
 .env-*
 .venv
+.venv-quant
+.venv-deploy
 env/
 venv/
 

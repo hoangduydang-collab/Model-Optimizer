@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/_env.sh"
+source "${SCRIPT_DIR}/_env_quant.sh"
 
 MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 HF_PTQ_DIR="${MODEL_OPT_REPO}/examples/hf_ptq"
