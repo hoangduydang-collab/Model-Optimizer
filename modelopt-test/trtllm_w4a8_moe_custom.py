@@ -314,7 +314,7 @@ def apply_trtllm_w4a8_custom_patches() -> None:
 
 
 def prepare_checkpoint_and_runtime(ckpt: Path, *, force_rewrite: bool = False) -> None:
-    apply_trtllm_w4a8_custom_patches()
+    """Rewrite checkpoint if needed. Call apply_trtllm_w4a8_custom_patches() after tensorrt_llm imports."""
     if _is_w4a8_awq_checkpoint(ckpt):
         rewrite_checkpoint_for_trtllm_w4a8_custom(ckpt, force=force_rewrite)
 

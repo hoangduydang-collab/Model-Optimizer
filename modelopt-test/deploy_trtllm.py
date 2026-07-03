@@ -60,13 +60,15 @@ def main() -> int:
     print(f"tp={args.tp} prompt={args.prompt!r}")
     print("quant summary:", json.dumps(_load_quant_summary(ckpt), indent=2))
 
-    from trtllm_w4a8_moe_custom import prepare_checkpoint_and_runtime
+    from trtllm_w4a8_moe_custom import (
+        apply_trtllm_w4a8_custom_patches,
+        prepare_checkpoint_and_runtime,
+    )
 
     try:
         prepare_checkpoint_and_runtime(ckpt)
-        print("TRT-LLM W4A8_CUSTOM MoE prep: applied runtime patch + checkpoint rewrite")
     except Exception as exc:
-        print(f"FAIL: W4A8_CUSTOM prep raised {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"FAIL: checkpoint prep raised {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
     try:
@@ -86,6 +88,17 @@ def main() -> int:
             exc,
             file=sys.stderr,
         )
+        print(
+            "Hint: source modelopt-test/_env.sh (sets LD_LIBRARY_PATH + Open MPI localhost).",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        apply_trtllm_w4a8_custom_patches()
+        print("TRT-LLM W4A8_CUSTOM MoE runtime patch applied")
+    except ImportError as exc:
+        print(f"FAIL: W4A8_CUSTOM runtime patch: {exc}", file=sys.stderr)
         return 1
 
     try:
