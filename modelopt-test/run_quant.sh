@@ -22,6 +22,8 @@ BATCH_SIZE="${BATCH_SIZE:-1}"
 # moe_calibrate_all_experts: true). Without this, sparse top-k routing leaves many
 # experts with zero amax and export falls back to weight-derived scales.
 MOE_CALIB_EXPERTS_RATIO="${MOE_CALIB_EXPERTS_RATIO:-1.0}"
+# For a curated Qwen3 MoE rerun (diverse public calib, v2 artifact path):
+#   bash modelopt-test/run_quant_qwen3_w4a8.sh
 EXPORT_PATH="${EXPORT_PATH:-/mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq}"
 
 echo "=== Gate A: ModelOpt quantize ==="

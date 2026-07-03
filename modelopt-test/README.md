@@ -14,6 +14,7 @@ Model-Optimizer/modelopt-test/
   _env_quant.sh          # activate quant venv
   _env_deploy.sh         # activate deploy venv
   run_quant.sh
+  run_quant_qwen3_w4a8.sh  # MoE w4a8: moe_calib=1.0 + diverse public calib mix
   run_export_only.sh
   inspect_ckpt.py
   deploy_trtllm.py
@@ -76,6 +77,23 @@ bash modelopt-test/remove_legacy_venv.sh
 ## Step 2 — Gate A: quantize (GPU, quant venv)
 
 `run_quant.sh` sources `_env_quant.sh` automatically.
+
+**Qwen3-30B-A3B w4a8_awq (recommended full re-calib):**
+
+```bash
+cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
+bash run_quant_qwen3_w4a8.sh
+```
+
+Defaults: `moe_calib_experts_ratio=1.0`, datasets `cnn_dailymail,pile,magpie,wikitext`, `calib_size=1024`, `calib_seq=2048`, export to `.../modelopt_qwen3_w4a8_awq_v2`.
+
+Overwrite a previous v2 run:
+
+```bash
+WIPE_EXPORT_PATH=1 bash run_quant_qwen3_w4a8.sh
+```
+
+Generic quant (custom env):
 
 ```bash
 cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test

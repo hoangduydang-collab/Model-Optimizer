@@ -263,11 +263,12 @@ cd ~/projects/Model-Optimizer
 
 # Gate A (quant venv)
 source modelopt-test/_env_quant.sh
-bash modelopt-test/run_export_only.sh
+bash modelopt-test/run_quant_qwen3_w4a8.sh
+# or: WIPE_EXPORT_PATH=1 bash modelopt-test/run_quant_qwen3_w4a8.sh
 
 # Gate C (deploy venv)
 bash modelopt-test/run_deploy.sh \
-  --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
+  --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq_v2 \
   --tp 2 --prompt "The capital of France is"
 ```
 

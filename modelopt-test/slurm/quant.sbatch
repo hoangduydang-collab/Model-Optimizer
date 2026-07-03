@@ -17,5 +17,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-bash "${TEST_DIR}/run_quant.sh"
+QUANT_SCRIPT="${QUANT_SCRIPT:-${TEST_DIR}/run_quant_qwen3_w4a8.sh}"
+bash "${QUANT_SCRIPT}"
 echo "QUANT JOB DONE (rc=$?)"
