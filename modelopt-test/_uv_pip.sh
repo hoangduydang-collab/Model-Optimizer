@@ -7,7 +7,10 @@
 
 _reinstall_editable_modelopt() {
   local repo="${1:?MODEL_OPT_REPO required}"
-  "$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
+  # TRT-LLM pulls PyPI nvidia-modelopt; remove all copies then install editable only.
+  while "$UV" pip uninstall -y nvidia-modelopt 2>/dev/null | grep -q 'Uninstalled'; do
+    :
+  done
   "$UV" pip install -e "${repo}[hf]"
 }
 

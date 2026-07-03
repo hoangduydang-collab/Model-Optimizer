@@ -2,28 +2,27 @@
 # SPDX-License-Identifier: Apache-2.0
 """Install-time patches so TensorRT-LLM 1.2.x imports with transformers 5.x.
 
-Upstream TRT-LLM merged this pattern on main (commit 58f7ccb); stable PyPI wheels
-(1.2.1, 1.3.0rc*) still hard-import ``AutoModelForVision2Seq``. ModelOpt Qwen3 MoE
-requires transformers >= 5.0 (``Qwen3MoeExperts``).
+Upstream TRT-LLM merged compat on main (e.g. 58f7ccb, d6dedbd); stable PyPI 1.2.1
+still hard-imports removed symbols. ModelOpt Qwen3 MoE needs transformers >= 5.0.
 
-Edits site-packages files directly — does not ``import tensorrt_llm`` (avoids circular
-init during setup).
+Edits site-packages files directly — does not ``import tensorrt_llm`` during patching.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from modelopt.deploy.trtllm_install_paths import find_tensorrt_llm_root
 
-TRANSFORMERS5_PATCH_MARKER = "# modelopt: transformers5 AutoModelForVision2Seq compat"
+TRANSFORMERS5_PATCH_MARKER = "# modelopt: transformers5 compat"
 
 _CONVERT_OLD = (
     "from transformers import (AutoModelForCausalLM, AutoModelForVision2Seq,\n"
     "                          AutoTokenizer)"
 )
 
-_CONVERT_NEW = f"""{TRANSFORMERS5_PATCH_MARKER}
+_CONVERT_NEW = f"""{TRANSFORMERS5_PATCH_MARKER} AutoModelForVision2Seq
 try:
     from transformers import AutoModelForVision2Seq
 except ImportError:
@@ -41,7 +40,7 @@ _MULTIMODAL_OLD = (
     "                          VisionEncoderDecoderModel, CLIPVisionModel)"
 )
 
-_MULTIMODAL_NEW = f"""{TRANSFORMERS5_PATCH_MARKER}
+_MULTIMODAL_NEW = f"""{TRANSFORMERS5_PATCH_MARKER} AutoModelForVision2Seq
 try:
     from transformers import AutoModelForVision2Seq
 except ImportError:
@@ -54,17 +53,55 @@ from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
                           Pix2StructForConditionalGeneration,
                           VisionEncoderDecoderModel, CLIPVisionModel)"""
 
+_GET_PARAMETER_DEVICE_BLOCK = f"""{TRANSFORMERS5_PATCH_MARKER} get_parameter_device
+try:
+    from transformers.modeling_utils import get_parameter_device, get_parameter_dtype
+except ImportError:
+    def get_parameter_device(module):
+        return next(module.parameters()).device
+
+    def get_parameter_dtype(module):
+        return next(module.parameters()).dtype"""
+
+# TRT-LLM 1.2.1 modeling_clip.py layout (parens + newline).
+_GET_PARAMETER_DEVICE_PAREN_RE = re.compile(
+    r"from transformers\.modeling_utils import\s*\(\s*get_parameter_device,\s*\n\s*get_parameter_dtype\s*\)"
+)
+_GET_PARAMETER_DEVICE_LINE_RE = re.compile(
+    r"from transformers\.modeling_utils import get_parameter_device, get_parameter_dtype"
+)
+
 
 def _patch_file(path: Path, old: str, new: str) -> bool:
     if not path.is_file():
         return False
     text = path.read_text(encoding="utf-8")
-    if TRANSFORMERS5_PATCH_MARKER in text or new in text:
+    if new in text:
         return False
     if old not in text:
         return False
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     return True
+
+
+def _patch_get_parameter_device_imports(root: Path) -> list[str]:
+    changed: list[str] = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if TRANSFORMERS5_PATCH_MARKER + " get_parameter_device" in text:
+            continue
+        if "get_parameter_device" not in text or "transformers.modeling_utils" not in text:
+            continue
+        new_text, n_paren = _GET_PARAMETER_DEVICE_PAREN_RE.subn(_GET_PARAMETER_DEVICE_BLOCK, text, count=1)
+        if n_paren:
+            path.write_text(new_text, encoding="utf-8")
+            changed.append(str(path))
+            continue
+        new_text, n_line = _GET_PARAMETER_DEVICE_LINE_RE.subn(_GET_PARAMETER_DEVICE_BLOCK, text, count=1)
+        if n_line:
+            path.write_text(new_text, encoding="utf-8")
+            changed.append(str(path))
+    return changed
 
 
 def trtllm_transformers5_patch_applied() -> bool:
@@ -90,6 +127,8 @@ def apply_trtllm_transformers5_compat_patch() -> list[str]:
     multimodal_path = root / "tools" / "multimodal_builder.py"
     if _patch_file(multimodal_path, _MULTIMODAL_OLD, _MULTIMODAL_NEW):
         changed.append(str(multimodal_path))
+
+    changed.extend(_patch_get_parameter_device_imports(root))
 
     return changed
 
