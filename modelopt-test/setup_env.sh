@@ -4,8 +4,9 @@
 # Default venv: <repo>/.venv  (gitignored, project-local — does not touch venvs/main)
 #
 # Usage:
-#   bash setup_env.sh
-#   RECREATE_VENV=1 bash setup_env.sh   # wipe and recreate .venv
+#   bash setup_env.sh                    # deploy path (TRT-LLM + patches; no hf_ptq)
+#   INSTALL_HF_PTQ=1 bash setup_env.sh   # also install hf_ptq extras + flash-attn
+#   RECREATE_VENV=1 bash setup_env.sh    # wipe and recreate .venv
 
 set -euo pipefail
 
@@ -22,6 +23,7 @@ echo "=== modelopt-test setup ==="
 echo "HOME=$HOME"
 echo "MODELOPT_VENV=$MODELOPT_VENV"
 echo "MODEL_OPT_REPO=$MODEL_OPT_REPO"
+echo "INSTALL_HF_PTQ=${INSTALL_HF_PTQ:-0}"
 
 if [[ "${RECREATE_VENV:-0}" == "1" ]]; then
   echo "Recreating venv (--clear)..."
@@ -36,21 +38,21 @@ fi
 # shellcheck disable=SC1091
 source "${MODELOPT_VENV}/bin/activate"
 
+echo "=== removing legacy TRT-LLM import-hook .pth (if any) ==="
+python - <<'PY'
+import site
+from pathlib import Path
+
+legacy = Path(site.getsitepackages()[0]) / "modelopt_trtllm_w4a8_custom.pth"
+if legacy.exists():
+    legacy.unlink()
+    print(f"Removed legacy hook: {legacy}")
+else:
+    print("No legacy .pth found")
+PY
+
 echo "=== installing Model Optimizer (editable) ==="
 "$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
-
-echo "=== installing hf_ptq example requirements ==="
-# flash-attn's setup imports torch but does not declare it as a build dependency.
-# modelopt[hf] installs torch above; use --no-build-isolation so the build sees it.
-"$UV" pip install compressed-tensors fire transformers_stream_generator zstandard
-if [[ "${SKIP_FLASH_ATTN:-0}" == "1" ]]; then
-  echo "SKIP_FLASH_ATTN=1: not installing flash-attn"
-elif python -c "import flash_attn" 2>/dev/null; then
-  echo "flash-attn already installed"
-else
-  echo "=== building flash-attn (--no-build-isolation) ==="
-  "$UV" pip install 'flash-attn>=2.6.0' --no-build-isolation
-fi
 
 echo "=== installing mpi4py (required by modelopt.deploy.llm) ==="
 "$UV" pip install mpi4py
@@ -64,6 +66,37 @@ echo "=== installing CUDA runtime libs for tensorrt-llm wheels ==="
 echo "=== re-pin local Model Optimizer (tensorrt-llm may replace PyPI modelopt) ==="
 "$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
 
+if [[ "${INSTALL_HF_PTQ:-0}" == "1" ]]; then
+  echo "=== installing hf_ptq example requirements (optional quant path) ==="
+  # Do not upgrade torch/triton/CUDA stack chosen by tensorrt-llm (node CUDA is 12.x).
+  NO_UPGRADE=(
+    --no-upgrade-package torch
+    --no-upgrade-package triton
+    --no-upgrade-package cuda-toolkit
+    --no-upgrade-package nvidia-cublas
+    --no-upgrade-package nvidia-cuda-runtime
+    --no-upgrade-package nvidia-cuda-nvrtc
+    --no-upgrade-package nvidia-nccl-cu13
+  )
+  "$UV" pip install "${NO_UPGRADE[@]}" \
+    compressed-tensors fire transformers_stream_generator zstandard
+
+  if [[ "${SKIP_FLASH_ATTN:-0}" == "1" ]]; then
+    echo "SKIP_FLASH_ATTN=1: not installing flash-attn"
+  elif python -c "import flash_attn" 2>/dev/null; then
+    echo "flash-attn already installed"
+  else
+    echo "=== building flash-attn (--no-build-isolation; may fail without matching CUDA) ==="
+    if ! "$UV" pip install 'flash-attn>=2.6.0' --no-build-isolation; then
+      echo "WARN: flash-attn install failed. hf_ptq may use sdpa/eager attention instead." >&2
+      echo "      Or set SKIP_FLASH_ATTN=1 if flash-attn is not needed." >&2
+    fi
+  fi
+else
+  echo "=== skipping hf_ptq requirements (deploy-only setup) ==="
+  echo "    For Gate A quantization: INSTALL_HF_PTQ=1 bash setup_env.sh"
+fi
+
 echo "=== smoke import ==="
 # shellcheck disable=SC1091
 source "${MODELOPT_VENV}/bin/activate"
@@ -73,23 +106,16 @@ python - <<'PY'
 import modelopt
 import tensorrt_llm
 from modelopt.deploy.llm import LLM  # noqa: F401
+import torch
 
 print("modelopt:", getattr(modelopt, "__version__", "unknown"))
 print("tensorrt_llm:", tensorrt_llm.__version__)
+print("torch:", torch.__version__, "cuda:", torch.version.cuda)
 print("import OK")
 PY
 
 echo "=== applying TRT-LLM Qwen MoE W4A8_CUSTOM patches ==="
 python - <<'PY'
-import site
-from pathlib import Path
-
-# Remove legacy runtime import-hook bootstrap if present.
-legacy = Path(site.getsitepackages()[0]) / "modelopt_trtllm_w4a8_custom.pth"
-if legacy.exists():
-    legacy.unlink()
-    print(f"Removed legacy hook: {legacy}")
-
 from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
 
 patched = apply_trtllm_qwen_moe_patches()
@@ -98,3 +124,4 @@ PY
 
 echo "=== done ==="
 echo "Activate with: source ${MODELOPT_VENV}/bin/activate"
+echo "Deploy:       source ${SCRIPT_DIR}/_env.sh && python ${SCRIPT_DIR}/deploy_trtllm.py ..."

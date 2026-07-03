@@ -34,9 +34,19 @@ cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash setup_env.sh
 ```
 
-Creates or reuses `<repo>/.venv`. `flash-attn` is built with `--no-build-isolation` (needs torch from `modelopt[hf]`). If it is already in the venv, setup skips the rebuild. Deploy-only refresh: `SKIP_FLASH_ATTN=1 bash setup_env.sh`.
+Creates or reuses `<repo>/.venv`. **Default setup is deploy-only** (TensorRT-LLM + patches; skips `hf_ptq` / `flash-attn` so torch is not upgraded to an incompatible CUDA 13 stack).
 
-To force a clean rebuild:
+```bash
+bash setup_env.sh
+```
+
+For Gate A quantization (adds `hf_ptq` deps without upgrading torch):
+
+```bash
+INSTALL_HF_PTQ=1 bash setup_env.sh
+```
+
+If your venv is broken (wrong torch/CUDA), recreate:
 
 ```bash
 RECREATE_VENV=1 bash setup_env.sh
