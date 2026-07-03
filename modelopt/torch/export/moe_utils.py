@@ -72,6 +72,99 @@ def _apply_fused_gate_up_amax_fallback(quantizer, fused_weight: torch.Tensor) ->
         quantizer.amax = fused_amax
 
 
+def _clear_blockquant_shape_lock(quantizer) -> None:
+    """Drop fused-calibration shape metadata so amax can be recomputed on a split weight."""
+    for attr in (
+        "_block_reshape_size",
+        "_original_shape",
+        "_amax_shape_for_export",
+        "_padding",
+        "_slices",
+    ):
+        if hasattr(quantizer, attr):
+            delattr(quantizer, attr)
+
+
+def _sync_int4_amax_export_shape(int4_q, weight: torch.Tensor) -> None:
+    """Align export reshape metadata with the split projection weight rows."""
+    if not getattr(int4_q, "block_sizes", None):
+        return
+    int4_q._amax_shape_for_export = tuple(weight.shape[:-1]) + (-1,)
+
+
+def _try_slice_fused_int4_amax(
+    int4_q,
+    weight_slice: torch.Tensor,
+    fused_start: int,
+    fused_total: int,
+) -> bool:
+    """Slice calibrated INT4 amax along fused gate_up dim-0. Returns True on success."""
+    if (
+        not hasattr(int4_q, "_amax")
+        or int4_q._amax is None
+        or int4_q._amax.dim() < 1
+        or _weight_quantizer_needs_amax_fallback(int4_q)
+    ):
+        return False
+
+    amax = int4_q._amax
+    if amax.numel() != fused_total and amax.numel() % fused_total == 0:
+        amax = amax.contiguous().view(fused_total, amax.numel() // fused_total)
+    amax_dim0 = amax.shape[0]
+    if fused_total % amax_dim0 != 0:
+        return False
+
+    slice_start = fused_start * amax_dim0 // fused_total
+    slice_end = (fused_start + weight_slice.shape[0]) * amax_dim0 // fused_total
+    sliced = amax[slice_start:slice_end].contiguous()
+    if sliced.shape[0] != weight_slice.shape[0]:
+        return False
+
+    if hasattr(int4_q, "_amax"):
+        delattr(int4_q, "_amax")
+    int4_q.amax = sliced
+    return True
+
+
+def _int4_scaling_rows_match(int4_q, out_rows: int) -> bool:
+    from modelopt.torch.export.quant_utils import get_scaling_factor
+
+    if _weight_quantizer_needs_amax_fallback(int4_q):
+        return False
+    scale = get_scaling_factor(int4_q)
+    if scale is None:
+        return False
+    if scale.dim() == 0:
+        return out_rows == 1
+    return scale.shape[0] == out_rows
+
+
+def _prepare_split_int4_weight_quantizer(
+    int4_q,
+    weight_slice: torch.Tensor,
+    fused_start: int,
+    fused_total: int,
+) -> bool:
+    """Ensure INT4 block scales match a gate/up weight slice after the fused split."""
+    used_fallback = False
+
+    if _try_slice_fused_int4_amax(int4_q, weight_slice, fused_start, fused_total):
+        _sync_int4_amax_export_shape(int4_q, weight_slice)
+    elif _weight_quantizer_needs_amax_fallback(int4_q):
+        _clear_blockquant_shape_lock(int4_q)
+        _recalibrate_weight_amax_from_tensor(int4_q, weight_slice)
+        _sync_int4_amax_export_shape(int4_q, weight_slice)
+        used_fallback = True
+
+    if not _int4_scaling_rows_match(int4_q, weight_slice.shape[0]):
+        _clear_blockquant_shape_lock(int4_q)
+        _recalibrate_weight_amax_from_tensor(int4_q, weight_slice)
+        _sync_int4_amax_export_shape(int4_q, weight_slice)
+        used_fallback = True
+
+    return used_fallback
+
+
 def _recalibrate_weight_amax_from_tensor(
     quantizer,
     weight: torch.Tensor,
@@ -93,6 +186,7 @@ def _recalibrate_weight_amax_from_tensor(
         return
     if not _weight_quantizer_needs_amax_fallback(quantizer):
         return
+    _clear_blockquant_shape_lock(quantizer)
     quantizer.reset_amax()
     enable_stats_collection(quantizer)
     quantizer(weight)
@@ -287,44 +381,59 @@ def _export_fused_experts(
                 copy.deepcopy(w_quantizer_src) if uses_first_proj_quantizers else w_quantizer_src
             )
 
-            # For per-channel / per-block INT4 amax (dim >= 1), proportionally slice
-            # dim-0 to match the split weight. SequentialQuantizer delegates amax
-            # to the first sub-quantizer, so slice on the INT4 submodule directly.
+            from modelopt.torch.quantization.nn import SequentialQuantizer
+
             int4_w_quantizer = _int4_weight_quantizer(w_quantizer)
-            if (
-                hasattr(int4_w_quantizer, "_amax")
-                and int4_w_quantizer._amax is not None
-                and int4_w_quantizer._amax.dim() >= 1
-            ):
-                amax = int4_w_quantizer._amax
-                # Per-block _amax (NVFP4 static) collapses the row axis we want
-                # to slice on; restore it so dim-0 slicing splits gate/up.
-                if amax.numel() != fused_total and amax.numel() % fused_total == 0:
-                    amax = amax.contiguous().view(fused_total, amax.numel() // fused_total)
-                amax_dim0 = amax.shape[0]
-                if fused_total % amax_dim0 == 0:
-                    slice_start = fused_start * amax_dim0 // fused_total
-                    slice_end = (fused_start + weight_slice.shape[0]) * amax_dim0 // fused_total
-                    sliced = amax[slice_start:slice_end].contiguous()
-                    # The amax setter refuses shape changes; drop _amax first.
-                    if hasattr(int4_w_quantizer, "_amax"):
-                        delattr(int4_w_quantizer, "_amax")
-                    int4_w_quantizer.amax = sliced
-                else:
+            if uses_first_proj_quantizers and isinstance(w_quantizer, SequentialQuantizer):
+                used_int4_fallback = _prepare_split_int4_weight_quantizer(
+                    int4_w_quantizer,
+                    weight_slice,
+                    fused_start,
+                    fused_total,
+                )
+                if used_int4_fallback:
                     warnings.warn(
-                        f"Expert {idx} {proj_name}: fused amax dim0 ({amax_dim0}) does not "
-                        f"evenly divide fused_total ({fused_total}). Skipping amax slicing, "
-                        f"which may produce incorrect quantization scales.",
+                        f"Expert {idx} {proj_name} INT4 weight quantizer was not calibrated "
+                        f"or had fused gate_up scales. Using weight-derived amax as fallback. "
+                        f"Consider using more calibration data to activate all experts.",
                         stacklevel=2,
                     )
-
-            # If the weight quantizer was never calibrated, compute amax from weights.
-            if _weight_quantizer_needs_amax_fallback(w_quantizer):
-                _recalibrate_weight_amax_from_tensor(
-                    w_quantizer,
-                    weight_slice,
-                    int4_only=uses_first_proj_quantizers,
-                )
+            elif uses_first_proj_quantizers:
+                if (
+                    hasattr(w_quantizer, "_amax")
+                    and w_quantizer._amax is not None
+                    and w_quantizer._amax.dim() >= 1
+                ):
+                    amax = w_quantizer._amax
+                    if amax.numel() != fused_total and amax.numel() % fused_total == 0:
+                        amax = amax.contiguous().view(fused_total, amax.numel() // fused_total)
+                    amax_dim0 = amax.shape[0]
+                    if fused_total % amax_dim0 == 0:
+                        slice_start = fused_start * amax_dim0 // fused_total
+                        slice_end = (
+                            fused_start + weight_slice.shape[0]
+                        ) * amax_dim0 // fused_total
+                        sliced = amax[slice_start:slice_end].contiguous()
+                        if hasattr(w_quantizer, "_amax"):
+                            delattr(w_quantizer, "_amax")
+                        w_quantizer.amax = sliced
+                    else:
+                        warnings.warn(
+                            f"Expert {idx} {proj_name}: fused amax dim0 ({amax_dim0}) does not "
+                            f"evenly divide fused_total ({fused_total}). Skipping amax slicing, "
+                            f"which may produce incorrect quantization scales.",
+                            stacklevel=2,
+                        )
+                if _weight_quantizer_needs_amax_fallback(w_quantizer):
+                    _recalibrate_weight_amax_from_tensor(w_quantizer, weight_slice)
+                    warnings.warn(
+                        f"Expert {idx} {proj_name} weight quantizer was not calibrated "
+                        f"(amax missing or zero). Using weight-derived amax as fallback. "
+                        f"Consider using more calibration data to activate all experts.",
+                        stacklevel=2,
+                    )
+            elif _weight_quantizer_needs_amax_fallback(w_quantizer):
+                _recalibrate_weight_amax_from_tensor(w_quantizer, weight_slice)
                 warnings.warn(
                     f"Expert {idx} {proj_name} weight quantizer was not calibrated "
                     f"(amax missing or zero). Using weight-derived amax as fallback. "
