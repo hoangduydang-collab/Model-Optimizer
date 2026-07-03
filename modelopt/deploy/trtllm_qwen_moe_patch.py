@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PATCH_MARKER = "# modelopt: W4A8_CUSTOM qwen moe"
+WEIGHT_PATCH_MARKER = "# modelopt: W4A8_CUSTOM hf export uses VANILLA weight layout"
 
 
 def _replace_once(path: Path, old: str, new: str) -> bool:
@@ -148,6 +149,72 @@ def _patch_qwen2_moe(path: Path) -> bool:
     return changed
 
 
+def _patch_w4a8_custom_weight_layout(path: Path) -> bool:
+    """ModelOpt HF export needs VANILLA int4 repack; DeepSeek CUSTOM uses pre-packed weights."""
+    text = path.read_text(encoding="utf-8")
+    if WEIGHT_PATCH_MARKER in text:
+        return False
+
+    w31_old = (
+        "        elif module.sm_version == 90 and module.weight_loading_mode == MoEWeightLoadingMode.W4A8_CUSTOM:\n"
+        "            pass\n"
+        "        else:\n"
+        "            raise NotImplementedError(\n"
+        "                f\"Unsupported configuration: SM{module.sm_version} and {module.weight_loading_mode}.\"\n"
+        "            )\n"
+        "\n"
+        "        dst_w3_w1_weight.copy_(w31_weight_shard.view(dst_w3_w1_weight.dtype),\n"
+    )
+    w31_new = (
+        "        elif module.sm_version == 90 and module.weight_loading_mode == MoEWeightLoadingMode.W4A8_CUSTOM:\n"
+        f"            {WEIGHT_PATCH_MARKER}\n"
+        "            transposed = w31_weight_shard.cpu().T.contiguous()\n"
+        "            unpacked = unpacker(transposed.view(torch.int8))\n"
+        "            transposed = unpacked.T.contiguous()\n"
+        "            w31_weight_shard = packer(transposed)\n"
+        "        else:\n"
+        "            raise NotImplementedError(\n"
+        "                f\"Unsupported configuration: SM{module.sm_version} and {module.weight_loading_mode}.\"\n"
+        "            )\n"
+        "\n"
+        "        dst_w3_w1_weight.copy_(w31_weight_shard.view(dst_w3_w1_weight.dtype),\n"
+    )
+    w2_old = (
+        "        elif module.sm_version == 90 and module.weight_loading_mode == MoEWeightLoadingMode.W4A8_CUSTOM:\n"
+        "            pass\n"
+        "        else:\n"
+        "            raise NotImplementedError(\n"
+        "                f\"Unsupported configuration: SM{module.sm_version} and {module.weight_loading_mode}.\"\n"
+        "            )\n"
+        "        dst_w2_weight.copy_(w2_weight_shard.view(dst_w2_weight.dtype),\n"
+    )
+    w2_new = (
+        "        elif module.sm_version == 90 and module.weight_loading_mode == MoEWeightLoadingMode.W4A8_CUSTOM:\n"
+        f"            {WEIGHT_PATCH_MARKER}\n"
+        "            transposed = w2_weight_shard.cpu().T.contiguous()\n"
+        "            unpacked = unpacker(transposed.view(torch.int8))\n"
+        "            transposed = unpacked.T.contiguous()\n"
+        "            w2_weight_shard = packer(transposed)\n"
+        "        else:\n"
+        "            raise NotImplementedError(\n"
+        "                f\"Unsupported configuration: SM{module.sm_version} and {module.weight_loading_mode}.\"\n"
+        "            )\n"
+        "        dst_w2_weight.copy_(w2_weight_shard.view(dst_w2_weight.dtype),\n"
+    )
+    if w31_old not in text:
+        raise RuntimeError(
+            f"TRT-LLM W4A8_CUSTOM weight-layout anchor not found in {path}."
+        )
+    if w2_old not in text:
+        raise RuntimeError(
+            f"TRT-LLM W4A8_CUSTOM w2 weight-layout anchor not found in {path}."
+        )
+    text = text.replace(w31_old, w31_new, 1)
+    text = text.replace(w2_old, w2_new, 1)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
 def apply_trtllm_qwen_moe_patches() -> list[str]:
     """Patch installed TensorRT-LLM to use W4A8_CUSTOM for folded-AWQ Qwen MoE."""
     import tensorrt_llm
@@ -162,6 +229,10 @@ def apply_trtllm_qwen_moe_patches() -> list[str]:
     qwen2_path = root / "_torch" / "models" / "modeling_qwen_moe.py"
     if qwen2_path.exists() and _patch_qwen2_moe(qwen2_path):
         changed.append(str(qwen2_path))
+
+    quant_path = root / "_torch" / "modules" / "fused_moe" / "quantization.py"
+    if quant_path.exists() and _patch_w4a8_custom_weight_layout(quant_path):
+        changed.append(str(quant_path))
 
     return changed
 
