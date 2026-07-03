@@ -15,11 +15,11 @@ export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
 
 case "${MODELOPT_PROFILE:-deploy}" in
   quant)
-    MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv-quant}"
+    MODELOPT_VENV="${MODEL_OPT_REPO}/.venv-quant"
     SETUP_HINT="bash ${SCRIPT_DIR}/setup_env_quant.sh"
     ;;
   deploy)
-    MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv-deploy}"
+    MODELOPT_VENV="${MODEL_OPT_REPO}/.venv-deploy"
     SETUP_HINT="bash ${SCRIPT_DIR}/setup_env_deploy.sh"
     ;;
   *)
@@ -27,6 +27,11 @@ case "${MODELOPT_PROFILE:-deploy}" in
     exit 1
     ;;
 esac
+
+# Optional explicit override (CI / custom layouts). Profile defaults are not sticky across shells.
+if [[ -n "${MODELOPT_VENV_OVERRIDE:-}" ]]; then
+  MODELOPT_VENV="${MODELOPT_VENV_OVERRIDE}"
+fi
 
 export MODELOPT_VENV MODELOPT_PROFILE
 

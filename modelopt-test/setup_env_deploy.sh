@@ -16,7 +16,7 @@ export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/_uv_pip.sh"
 
-MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv-deploy}"
+MODELOPT_VENV="${MODELOPT_VENV_OVERRIDE:-${MODEL_OPT_REPO}/.venv-deploy}"
 TENSORRT_LLM_SPEC="${TENSORRT_LLM_SPEC:-tensorrt-llm==1.2.1}"
 
 echo "=== modelopt-test setup (DEPLOY) ==="

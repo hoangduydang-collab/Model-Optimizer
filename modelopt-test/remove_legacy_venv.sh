@@ -25,6 +25,10 @@ if [[ -n "${VIRTUAL_ENV:-}" && "${VIRTUAL_ENV}" == "${LEGACY_VENV}" ]]; then
   fi
 fi
 
+if [[ "${MODELOPT_VENV:-}" == "${LEGACY_VENV}" ]]; then
+  unset MODELOPT_VENV
+fi
+
 size="$(du -sh "${LEGACY_VENV}" 2>/dev/null | cut -f1 || echo unknown)"
 echo "Legacy .venv found: ${LEGACY_VENV} (${size})"
 echo "Dual venvs in use: ${MODEL_OPT_REPO}/.venv-quant, ${MODEL_OPT_REPO}/.venv-deploy"

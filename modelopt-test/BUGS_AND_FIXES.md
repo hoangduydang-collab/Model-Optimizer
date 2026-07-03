@@ -292,6 +292,7 @@ Legacy single `.venv` on NFS had transformers 5.x + TRT-LLM; interactive shells 
 ### Fix
 
 ```bash
+unset MODELOPT_VENV
 deactivate 2>/dev/null || true
 bash modelopt-test/remove_legacy_venv.sh
 bash modelopt-test/run_deploy.sh \
