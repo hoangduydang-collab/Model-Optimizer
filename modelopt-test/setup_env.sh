@@ -69,5 +69,8 @@ print("tensorrt_llm:", tensorrt_llm.__version__)
 print("import OK")
 PY
 
+echo "=== installing TRT-LLM MPI worker patch (.pth) ==="
+python -c "import sys; sys.path.insert(0, '${SCRIPT_DIR}'); from trtllm_w4a8_moe_custom import install_mpi_worker_patch; print(install_mpi_worker_patch())"
+
 echo "=== done ==="
 echo "Activate with: source ${MODELOPT_VENV}/bin/activate"

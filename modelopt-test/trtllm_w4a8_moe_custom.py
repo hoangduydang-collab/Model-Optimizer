@@ -18,6 +18,7 @@ This module:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -275,6 +276,32 @@ def rewrite_checkpoint_for_trtllm_w4a8_custom(
     return True
 
 
+def _should_use_w4a8_custom(model_config) -> bool:
+    """True when Qwen MoE should load ModelOpt folded-AWQ checkpoints as CUSTOM_W4A8."""
+    if os.environ.get("MODELOPT_TRTLLM_W4A8_AWQ_MOE") == "1":
+        return True
+
+    cfg = getattr(model_config, "pretrained_config", None)
+    model_type = getattr(cfg, "model_type", None) if cfg is not None else None
+    if model_type not in ("qwen3_moe", "qwen2_moe"):
+        return False
+
+    qc = getattr(model_config, "quant_config", None)
+    if qc is None:
+        return False
+
+    mode = getattr(qc, "layer_quant_mode", None)
+    if mode is not None and hasattr(mode, "is_int4_weight_only_per_group"):
+        if mode.is_int4_weight_only_per_group():
+            return True
+
+    quant_algo = getattr(qc, "quant_algo", None)
+    if quant_algo is not None and "W4A8" in str(quant_algo).upper():
+        return True
+
+    return False
+
+
 def apply_trtllm_w4a8_custom_patches() -> None:
     """Select W4A8_CUSTOM MoE loading for Qwen MoE + ModelOpt W4A8_AWQ."""
     try:
@@ -291,17 +318,10 @@ def apply_trtllm_w4a8_custom_patches() -> None:
     _orig_create_moe = fused_moe_mod.create_moe
 
     def create_moe(*args, model_config=None, weight_loading_mode=MoEWeightLoadingMode.VANILLA, **kwargs):
-        if weight_loading_mode == MoEWeightLoadingMode.VANILLA and model_config is not None:
-            cfg = getattr(model_config, "pretrained_config", None)
-            model_type = getattr(cfg, "model_type", None) if cfg is not None else None
-            if model_type in ("qwen3_moe", "qwen2_moe"):
-                qc = getattr(model_config, "quant_config", None)
-                if (
-                    qc is not None
-                    and hasattr(qc.layer_quant_mode, "is_int4_weight_only_per_group")
-                    and qc.layer_quant_mode.is_int4_weight_only_per_group()
-                ):
-                    weight_loading_mode = MoEWeightLoadingMode.W4A8_CUSTOM
+        if weight_loading_mode == MoEWeightLoadingMode.VANILLA and _should_use_w4a8_custom(
+            model_config
+        ):
+            weight_loading_mode = MoEWeightLoadingMode.W4A8_CUSTOM
         return _orig_create_moe(
             *args,
             model_config=model_config,
@@ -311,6 +331,49 @@ def apply_trtllm_w4a8_custom_patches() -> None:
 
     fused_moe_mod.create_moe = create_moe
     fused_moe_mod._modelopt_w4a8_custom_patched = True
+
+
+def register_mpi_worker_patch() -> None:
+    """Register import hook so TRT-LLM MPI worker processes also patch create_moe."""
+    if getattr(register_mpi_worker_patch, "_registered", False):
+        return
+
+    import builtins
+
+    _orig_import = builtins.__import__
+
+    def _import_hook(name, globals=None, locals=None, fromlist=(), level=0):
+        mod = _orig_import(name, globals, locals, fromlist, level)
+        if name == "tensorrt_llm._torch.modules.fused_moe" or (
+            fromlist and "fused_moe" in fromlist and name == "tensorrt_llm._torch.modules"
+        ):
+            try:
+                apply_trtllm_w4a8_custom_patches()
+            except ImportError:
+                pass
+        return mod
+
+    builtins.__import__ = _import_hook
+    register_mpi_worker_patch._registered = True  # type: ignore[attr-defined]
+
+    if "tensorrt_llm._torch.modules.fused_moe" in sys.modules:
+        apply_trtllm_w4a8_custom_patches()
+
+
+def install_mpi_worker_patch() -> Path:
+    """Install a site-packages .pth so every Python process (incl. MPI workers) registers the hook."""
+    import site
+
+    repo_test = Path(__file__).resolve().parent
+    site_packages = Path(site.getsitepackages()[0])
+    pth_path = site_packages / "modelopt_trtllm_w4a8_custom.pth"
+    pth_path.write_text(
+        f"import sys; sys.path.insert(0, {str(repo_test)!r}); "
+        "import trtllm_w4a8_moe_custom; trtllm_w4a8_moe_custom.register_mpi_worker_patch()\n",
+        encoding="utf-8",
+    )
+    register_mpi_worker_patch()
+    return pth_path
 
 
 def prepare_checkpoint_and_runtime(ckpt: Path, *, force_rewrite: bool = False) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -60,8 +61,13 @@ def main() -> int:
     print(f"tp={args.tp} prompt={args.prompt!r}")
     print("quant summary:", json.dumps(_load_quant_summary(ckpt), indent=2))
 
+    quant_summary = _load_quant_summary(ckpt)
+    if quant_summary.get("quant_algo") == "W4A8_AWQ":
+        os.environ["MODELOPT_TRTLLM_W4A8_AWQ_MOE"] = "1"
+
     from trtllm_w4a8_moe_custom import (
         apply_trtllm_w4a8_custom_patches,
+        install_mpi_worker_patch,
         prepare_checkpoint_and_runtime,
     )
 
@@ -95,8 +101,9 @@ def main() -> int:
         return 1
 
     try:
+        pth = install_mpi_worker_patch()
         apply_trtllm_w4a8_custom_patches()
-        print("TRT-LLM W4A8_CUSTOM MoE runtime patch applied")
+        print(f"TRT-LLM W4A8_CUSTOM MoE patch installed ({pth.name}) + applied in parent")
     except ImportError as exc:
         print(f"FAIL: W4A8_CUSTOM runtime patch: {exc}", file=sys.stderr)
         return 1
