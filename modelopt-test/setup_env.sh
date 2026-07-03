@@ -48,8 +48,8 @@ echo "=== installing mpi4py (required by modelopt.deploy.llm) ==="
 echo "=== installing TensorRT-LLM (NVIDIA PyPI) ==="
 "$UV" pip install tensorrt-llm --extra-index-url https://pypi.nvidia.com
 
-echo "=== installing CUDA 13 runtime libs for tensorrt-llm wheels ==="
-"$UV" pip install nvidia-cublas-cu13 nvidia-cudnn-cu13
+echo "=== installing CUDA runtime libs for tensorrt-llm wheels ==="
+"$UV" pip install nvidia-cublas nvidia-cudnn --extra-index-url https://pypi.nvidia.com
 
 echo "=== re-pin local Model Optimizer (tensorrt-llm may replace PyPI modelopt) ==="
 "$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
