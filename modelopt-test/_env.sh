@@ -20,3 +20,31 @@ fi
 
 # shellcheck disable=SC1091
 source "${MODELOPT_VENV}/bin/activate"
+
+_export_nvidia_wheel_libs() {
+  local py="${MODELOPT_VENV}/bin/python"
+  [[ -x "$py" ]] || return 0
+  local lib_paths
+  lib_paths="$("$py" - <<'PY'
+import site
+from pathlib import Path
+
+dirs: list[str] = []
+for root in site.getsitepackages():
+    nvidia = Path(root) / "nvidia"
+    if not nvidia.is_dir():
+        continue
+    for child in nvidia.iterdir():
+        lib = child / "lib"
+        if lib.is_dir():
+            dirs.append(str(lib))
+if dirs:
+    print(":".join(dirs))
+PY
+)"
+  if [[ -n "$lib_paths" ]]; then
+    export LD_LIBRARY_PATH="${lib_paths}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
+}
+
+_export_nvidia_wheel_libs

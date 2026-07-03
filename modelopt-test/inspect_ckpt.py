@@ -39,7 +39,28 @@ def _bits_summary(qc: dict) -> list[str]:
     return lines
 
 
-def _ignore_hits(ignore: list) -> dict[str, bool]:
+def _algo_implies_bits(algo: str) -> tuple[bool, bool]:
+    """Return (w4, fp8_activations) implied by top-level quant_algo when config_groups absent."""
+    w4_algos = {
+        "W4A8_AWQ",
+        "NVFP4_AWQ",
+        "W4A16_AWQ",
+        "W4A16_NVFP4",
+        "W4A8_NVFP4_FP8",
+        "W4A8_MXFP4_FP8",
+    }
+    fp8_act_algos = {"W4A8_AWQ", "NVFP4_AWQ", "W4A8_NVFP4_FP8", "W4A8_MXFP4_FP8"}
+    return algo in w4_algos, algo in fp8_act_algos
+
+
+def _weight_shards_present(ckpt: Path) -> bool:
+    if (ckpt / "model.safetensors").exists():
+        return True
+    index = ckpt / "model.safetensors.index.json"
+    if index.exists():
+        return True
+    return any(ckpt.glob("model-*.safetensors"))
+
     patterns = {
         "lm_head": r"lm_head",
         "moe_gate": r"mlp\.gate|router|block_sparse_moe\.gate",
@@ -73,25 +94,37 @@ def main() -> int:
     print(f"ignore entries: {len(ignore)}")
     print(f"expected skips present: {hits}")
     print("config_groups:")
-    for line in _bits_summary(qc):
-        print(line)
+    group_lines = _bits_summary(qc)
+    if group_lines:
+        for line in group_lines:
+            print(line)
+    else:
+        print("  (empty — ModelOpt omits config_groups for uniform W4A8_AWQ; see quant_algo)")
 
     algo = str(qc.get("quant_algo", ""))
-    group_lines = _bits_summary(qc)
     w4 = any("weights=4-bit" in ln for ln in group_lines)
     fp8_act = any("acts=8-bit float" in ln for ln in group_lines)
+    if not group_lines:
+        w4_algo, fp8_algo = _algo_implies_bits(algo)
+        w4 = w4 or w4_algo
+        fp8_act = fp8_act or fp8_algo
+
+    has_weights = _weight_shards_present(ckpt)
+    print(f"weight_shards: {has_weights}")
 
     if algo in ("W4A8_AWQ", "NVFP4_AWQ"):
-        ok = w4 and fp8_act
+        ok = w4 and fp8_act and has_weights
     elif algo in ("W4A16_AWQ",):
-        ok = w4
+        ok = w4 and has_weights
     else:
-        ok = w4
+        ok = w4 and has_weights
 
     if not hits.get("lm_head"):
         print("WARN: lm_head not found in ignore list")
+        ok = False
     if not hits.get("moe_gate"):
         print("WARN: MoE gate/router not found in ignore list")
+        ok = False
 
     print(f"\ninspect_ok: {ok}")
     return 0 if ok else 1

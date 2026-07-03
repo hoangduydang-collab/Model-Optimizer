@@ -42,13 +42,23 @@ echo "=== installing Model Optimizer (editable) ==="
 echo "=== installing hf_ptq example requirements ==="
 "$UV" pip install -r "${MODEL_OPT_REPO}/examples/hf_ptq/requirements.txt"
 
-echo "=== installing TensorRT-LLM (NVIDIA PyPI) ==="
-"$UV" pip install tensorrt-llm --extra-index-url https://pypi.nvidia.com
-
 echo "=== installing mpi4py (required by modelopt.deploy.llm) ==="
 "$UV" pip install mpi4py
 
+echo "=== installing TensorRT-LLM (NVIDIA PyPI) ==="
+"$UV" pip install tensorrt-llm --extra-index-url https://pypi.nvidia.com
+
+echo "=== installing CUDA 13 runtime libs for tensorrt-llm wheels ==="
+"$UV" pip install nvidia-cublas-cu13 nvidia-cudnn-cu13
+
+echo "=== re-pin local Model Optimizer (tensorrt-llm may replace PyPI modelopt) ==="
+"$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
+
 echo "=== smoke import ==="
+# shellcheck disable=SC1091
+source "${MODELOPT_VENV}/bin/activate"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_env.sh"
 python - <<'PY'
 import modelopt
 import tensorrt_llm
