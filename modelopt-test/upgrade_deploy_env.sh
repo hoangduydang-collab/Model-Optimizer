@@ -19,6 +19,9 @@ MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 source /mnt/nfs/hoangduy/env.sh
 export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
 
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_uv_pip.sh"
+
 # Polaris CUDA 12.x: stay on TRT-LLM 1.2.x. Override only on CUDA 13 nodes.
 TENSORRT_LLM_SPEC="${TENSORRT_LLM_SPEC:-tensorrt-llm==1.2.1}"
 TRANSFORMERS_SPEC="${TRANSFORMERS_SPEC:-transformers>=5.0,<5.13}"
@@ -35,30 +38,34 @@ source "${SCRIPT_DIR}/_env.sh"
 echo "=== upgrade_deploy_env.sh ==="
 echo "host=$(hostname) date=$(date -Is)"
 echo "TENSORRT_LLM_SPEC=$TENSORRT_LLM_SPEC"
-echo "TRANSFORMERS_SPEC=$TRANSFORMERS_SPEC"
 
 echo "=== 1/5 re-pin editable Model Optimizer ==="
-"$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
-"$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
+_reinstall_editable_modelopt "${MODEL_OPT_REPO}"
 
 echo "=== 2/5 (re)install TensorRT-LLM (CUDA 12 line) ==="
 "$UV" pip install "${TENSORRT_LLM_SPEC}" --extra-index-url https://pypi.nvidia.com
 
-echo "=== 3/5 pin transformers for fused Qwen3 MoE ==="
-NO_UPGRADE=(
-  --no-upgrade-package torch
-  --no-upgrade-package triton
-  --no-upgrade-package cuda-toolkit
-  --no-upgrade-package nvidia-cublas
-  --no-upgrade-package nvidia-cuda-runtime
-  --no-upgrade-package nvidia-cuda-nvrtc
-  --no-upgrade-package nvidia-nccl-cu13
-)
-"$UV" pip install "${NO_UPGRADE[@]}" "${TRANSFORMERS_SPEC}"
+echo "=== 3/5 pin transformers for fused Qwen3 MoE (overrides TRT-LLM 4.57.3 pin) ==="
+_pin_transformers_for_moe
 
 echo "=== 4/5 re-pin editable Model Optimizer (after TRT-LLM) ==="
-"$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
-"$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
+_reinstall_editable_modelopt "${MODEL_OPT_REPO}"
+
+echo "=== versions before patches ==="
+python - <<'PY'
+import importlib.metadata as m
+
+def ver(name):
+    try:
+        return m.version(name)
+    except m.PackageNotFoundError:
+        return "not installed"
+
+for pkg in ("transformers", "tensorrt-llm", "nvidia-modelopt"):
+    print(f"  {pkg}: {ver(pkg)}")
+import modelopt
+print(f"  modelopt.__file__: {modelopt.__file__}")
+PY
 
 echo "=== 5/5 apply TRT-LLM patches ==="
 python - <<'PY'
@@ -71,7 +78,7 @@ print("transformers5 patch:", t5 or "already applied")
 print("W4A8_CUSTOM patch:", w4 or "already applied")
 PY
 
-echo "=== smoke test (no runtime shim) ==="
+echo "=== smoke test ==="
 python - <<'PY'
 import transformers
 import tensorrt_llm

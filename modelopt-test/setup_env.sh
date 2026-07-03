@@ -16,6 +16,9 @@ MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 source /mnt/nfs/hoangduy/env.sh
 export HOME="${WORK_ROOT:-/mnt/nfs/hoangduy}"
 
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_uv_pip.sh"
+
 # Override VENV from env.sh — keep this test's env inside the repo checkout.
 MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv}"
 
@@ -66,36 +69,14 @@ echo "=== installing CUDA runtime libs for tensorrt-llm wheels ==="
 "$UV" pip install nvidia-cublas nvidia-cudnn --extra-index-url https://pypi.nvidia.com
 
 echo "=== re-pin local Model Optimizer (tensorrt-llm may replace PyPI modelopt) ==="
-"$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
-"$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
+_reinstall_editable_modelopt "${MODEL_OPT_REPO}"
 
 echo "=== pin transformers (fused Qwen3MoeExperts requires >= 5.0) ==="
-TRANSFORMERS_SPEC="${TRANSFORMERS_SPEC:-transformers>=5.0,<5.13}"
-NO_UPGRADE=(
-  --no-upgrade-package torch
-  --no-upgrade-package triton
-  --no-upgrade-package cuda-toolkit
-  --no-upgrade-package nvidia-cublas
-  --no-upgrade-package nvidia-cuda-runtime
-  --no-upgrade-package nvidia-cuda-nvrtc
-  --no-upgrade-package nvidia-nccl-cu13
-)
-"$UV" pip install "${NO_UPGRADE[@]}" "${TRANSFORMERS_SPEC}"
+_pin_transformers_for_moe
 
 if [[ "${INSTALL_HF_PTQ:-0}" == "1" ]]; then
   echo "=== installing hf_ptq example requirements (optional quant path) ==="
-  # Do not upgrade torch/triton/CUDA stack chosen by tensorrt-llm (node CUDA is 12.x).
-  NO_UPGRADE=(
-    --no-upgrade-package torch
-    --no-upgrade-package triton
-    --no-upgrade-package cuda-toolkit
-    --no-upgrade-package nvidia-cublas
-    --no-upgrade-package nvidia-cuda-runtime
-    --no-upgrade-package nvidia-cuda-nvrtc
-    --no-upgrade-package nvidia-nccl-cu13
-  )
-  "$UV" pip install "${NO_UPGRADE[@]}" \
-    compressed-tensors fire transformers_stream_generator zstandard
+  _uv_pip_install_hf_ptq_extras
 
   if [[ "${SKIP_FLASH_ATTN:-0}" == "1" ]]; then
     echo "SKIP_FLASH_ATTN=1: not installing flash-attn"
