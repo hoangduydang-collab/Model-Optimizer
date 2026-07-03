@@ -27,6 +27,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--no-trust_remote_code", dest="trust_remote_code", action="store_false")
     p.add_argument("--max_batch_size", type=int, default=1)
     p.add_argument("--max_seq_len", type=int, default=4096, help="cap context for smoke test")
+    p.add_argument(
+        "--force-rewrite",
+        action="store_true",
+        help="re-run W4A8_CUSTOM scale rewrite even if v2 marker exists (does not fix bad export)",
+    )
     return p.parse_args()
 
 
@@ -82,6 +87,23 @@ def _assert_deploy_venv() -> str | None:
     return None
 
 
+def _looks_like_repetitive_garbage(text: str) -> bool:
+    """Detect collapsed generation (e.g. 'the the the ...' / 'organisers organisers')."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    import re
+
+    if re.search(r"(\b\w+\b)(?:\s+\1){4,}", stripped, flags=re.IGNORECASE):
+        return True
+    words = stripped.split()
+    if len(words) >= 8:
+        unique_ratio = len(set(w.lower() for w in words)) / len(words)
+        if unique_ratio < 0.25:
+            return True
+    return False
+
+
 def main() -> int:
     venv_err = _assert_deploy_venv()
     if venv_err:
@@ -112,7 +134,8 @@ def main() -> int:
         from modelopt.torch.export.trtllm_w4a8_moe import rewrite_checkpoint_for_trtllm_w4a8_custom
 
         try:
-            rewrite_checkpoint_for_trtllm_w4a8_custom(ckpt)
+            prepared = rewrite_checkpoint_for_trtllm_w4a8_custom(ckpt, force=args.force_rewrite)
+            print(f"W4A8_CUSTOM checkpoint prep: {'rewrote' if args.force_rewrite else 'ok'} ({prepared})")
         except Exception as exc:
             print(f"FAIL: checkpoint prep raised {type(exc).__name__}: {exc}", file=sys.stderr)
             return 1
@@ -176,16 +199,32 @@ def main() -> int:
     text = outputs[0] if outputs else ""
     full = args.prompt + text
     sane = bool(text and text.strip())
+    quality_ok = sane and not _looks_like_repetitive_garbage(text)
 
     print("\n========== TRT-LLM OUTPUT ==========")
     print(f"prompt: {args.prompt!r}")
     print(f"completion: {text!r}")
     print(f"full: {full!r}")
     print(f"sane_output: {sane}")
+    print(f"quality_ok: {quality_ok}")
     print("====================================\n")
 
     if not sane:
         print("FAIL: empty or whitespace-only completion", file=sys.stderr)
+        return 1
+
+    if not quality_ok:
+        print(
+            "FAIL: repetitive / collapsed generation (W4A8 scale layout likely wrong).",
+            file=sys.stderr,
+        )
+        print(
+            "Re-export from calib cache (quant venv), then redeploy:\n"
+            "  source modelopt-test/_env_quant.sh\n"
+            "  bash modelopt-test/run_export_only.sh\n"
+            "  bash modelopt-test/run_deploy.sh --checkpoint_dir ... --tp 2",
+            file=sys.stderr,
+        )
         return 1
 
     print("PASS: TensorRT-LLM loaded checkpoint and returned sane text")

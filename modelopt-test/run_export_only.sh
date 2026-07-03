@@ -27,6 +27,9 @@ echo "host=$(hostname) date=$(date -Is)"
 echo "model=$MODEL qformat=$QFORMAT export_path=$EXPORT_PATH"
 echo "calib_ckpt=$CALIB_CKPT ($(du -h "$CALIB_CKPT" | cut -f1))"
 
+# Drop deploy-time marker so Gate C re-validates scales after a fresh export.
+rm -f "${EXPORT_PATH}/.trtllm_w4a8_custom_prepared.json"
+
 cd "$HF_PTQ_DIR"
 export TORCH_COMPILE_DISABLE=1
 
@@ -41,6 +44,7 @@ python hf_ptq.py \
 
 echo "=== Export-only DONE ==="
 echo "checkpoint: $EXPORT_PATH"
-echo "W4A8_AWQ MoE exports include TRT-LLM W4A8_CUSTOM scales automatically."
+echo "W4A8_AWQ MoE exports include TRT-LLM W4A8_CUSTOM scales automatically (v2)."
 
 echo "Next: python ${SCRIPT_DIR}/inspect_ckpt.py $EXPORT_PATH"
+echo "Gate C: bash ${SCRIPT_DIR}/run_deploy.sh --checkpoint_dir $EXPORT_PATH --tp 2"

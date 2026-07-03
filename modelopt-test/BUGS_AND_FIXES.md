@@ -252,7 +252,7 @@ Applied automatically by `modelopt-test/setup_env_deploy.sh`.
 | A: AWQ calib + save `.pth` | **Done** | h104, ~1.5h, 13158 quantizers, `Qwen3MoeExperts` |
 | A: HF export | **Blocked → unblocked** | Export bugs fixed; blocked on transformers align + re-export |
 | C: TRT-LLM load | **Pass** | 873 modules, ~24s |
-| C: Generation quality | **Fail → pending** | Scale fusion fix needs re-export + redeploy |
+| C: Generation quality | **Fail** | Repetitive tokens — **re-export** from calib cache (v2 scale fusion) |
 
 ---
 
