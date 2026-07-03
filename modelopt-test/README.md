@@ -93,6 +93,13 @@ Overwrite a previous v2 run:
 WIPE_EXPORT_PATH=1 bash run_quant_qwen3_w4a8.sh
 ```
 
+**Run in tmux** (survives SSH disconnect):
+
+```bash
+bash modelopt-test/start_quant_tmux.sh
+tmux attach -t qwen3-w4a8-quant    # Ctrl-b d to detach
+```
+
 Generic quant (custom env):
 
 ```bash
