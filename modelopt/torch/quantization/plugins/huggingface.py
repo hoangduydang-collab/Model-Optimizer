@@ -1543,87 +1543,25 @@ def _has_num_experts(obj):
     return hasattr(obj, "num_experts") or hasattr(obj, "n_routed_experts")
 
 
-def _looks_like_fused_moe_experts(module) -> bool:
-    """Return True for stacked 3-D MoE expert containers (Qwen3/Mixtral v5, etc.).
-
-    ``nn.Module`` is always iterable over child modules, so sparse detection must not
-    use ``hasattr(experts, "__iter__")`` — that mis-classifies fused ``Qwen3MoeExperts``.
-    """
-    if _is_fused_experts_module(module):
-        return True
-    if hasattr(module, "gate_up_proj"):
-        return True
-    # Fused containers expose num_experts + down_proj but are not per-expert ModuleLists.
-    return (
-        hasattr(module, "num_experts")
-        and hasattr(module, "down_proj")
-        and not isinstance(module, nn.ModuleList)
-    )
-
-
-def _is_sparse_sequaential_moe_block(module):
-    """Check if a module is structurally a sparse sequential MoE block compatible with _QuantSparseSequentialMoe.
-
-    All HuggingFace MoE blocks (Mixtral, Qwen3Moe, Qwen2Moe, Qwen3Next, Llama4, MiniMax,
-    NemotronH, etc.) share a common structural pattern: a ``gate`` (TopKRouter) sub-module with
-    routing attributes (``top_k`` and ``num_experts`` or ``n_routed_experts``), and an ``experts``
-    sub-module.
-
-    This function detects that pattern instead of relying on class names, making it forward-compatible
-    with new MoE architectures.
-    """
-    if not hasattr(module, "experts"):
-        return False
-
-    experts = module.experts
-
-    if _looks_like_fused_moe_experts(experts):
-        return False
-
-    # Sparse sequential MoE uses a per-expert ``nn.ModuleList`` (v4-style), not fused 3-D tensors.
-    if not isinstance(experts, nn.ModuleList):
-        return False
-
-    # Primary: gate sub-module has topk/top_k + num_experts (standard TopKRouter pattern)
-    if hasattr(module, "gate"):
-        gate = module.gate
-        if hasattr(gate, "top_k") and _has_num_experts(gate):
-            return True
-
-    # Fallback: top_k + num_experts on the block itself (older transformers, e.g. v4.x Qwen3Next)
-    if hasattr(module, "top_k"):
-        if not _has_num_experts(module) and hasattr(module.experts, "__len__"):
-            module.num_experts = len(module.experts)
-        return _has_num_experts(module)
-
-    return False
-
-
-def register_sparse_moe_on_the_fly(model):
-    """Auto-detect and register MOE modules as _QuantSparseSequentialMoe.
-
-    Walks the model tree, identifies MoE blocks by their structural attributes
-    (``gate`` + ``experts``), and registers unregistered ones with ``_QuantSparseSequentialMoe``.
-    """
-    visited_types = set()
-    for name, module in model.named_modules():
-        mod_type = type(module)
-
-        # Avoid duplicate registration: skip if we already processed this type
-        # in this walk, or if it was previously registered in the QuantModuleRegistry.
-        if mod_type in visited_types or QuantModuleRegistry.get(mod_type) is not None:
-            continue
-
-        visited_types.add(mod_type)
-
-        if _is_sparse_sequaential_moe_block(module):
-            print(
-                f"\033[1mDetected MOE module '{name}' of type {mod_type.__name__}, "
-                f"registering with _QuantSparseSequentialMoe.\033[0m"
-            )
-            QuantModuleRegistry.register({mod_type: f"hf.{mod_type.__name__}"})(
-                _QuantSparseSequentialMoe
-            )
+# Stacked 3-D expert containers (transformers>=5). Same families called out in
+# export.layer_utils.get_expert_linear_names and _fused_experts_wrapper_class.
+# When a MoE block's ``experts`` child matches, use _QuantFusedExperts — never
+# _QuantSparseSequentialMoe on the parent block (Qwen3/DeepSeek/Mixtral v5).
+_FUSED_MOE_EXPERTS_TYPE_NAMES = frozenset(
+    {
+        "MixtralExperts",
+        "Qwen2MoeExperts",
+        "Qwen3MoeExperts",
+        "Qwen3_5MoeExperts",
+        "DeepseekV3NaiveMoe",
+        "JambaExperts",
+        "OlmoeExperts",
+        "MiniMaxM2Experts",
+        "MiniMaxM3VLExperts",
+        "NemotronHExperts",
+    }
+)
+_NON_GATED_FUSED_MOE_EXPERTS_TYPE_NAMES = frozenset({"NemotronHExperts"})
 
 
 def _fused_experts_wrapper_class(module):
@@ -1671,6 +1609,123 @@ def _is_fused_experts_module(module):
     return _fused_experts_wrapper_class(module) is not None
 
 
+def _is_known_fused_moe_experts_type(module) -> bool:
+    return type(module).__name__ in _FUSED_MOE_EXPERTS_TYPE_NAMES
+
+
+def _wrapper_class_for_known_fused_moe_experts(module):
+    """Map a known HF fused-experts class name to its quant wrapper."""
+    name = type(module).__name__
+    if name not in _FUSED_MOE_EXPERTS_TYPE_NAMES:
+        return None
+    if name in _NON_GATED_FUSED_MOE_EXPERTS_TYPE_NAMES:
+        return _QuantNonGatedFusedExperts
+    return _QuantFusedExperts
+
+
+def _looks_like_fused_moe_experts(module) -> bool:
+    """Return True for stacked 3-D MoE expert containers (Qwen3/Mixtral v5, etc.).
+
+    ``nn.Module`` is always iterable over child modules, so sparse detection must not
+    use ``hasattr(experts, "__iter__")`` — that mis-classifies fused ``Qwen3MoeExperts``.
+    """
+    if module is None:
+        return False
+    if _is_known_fused_moe_experts_type(module):
+        return True
+    if _is_fused_experts_module(module):
+        return True
+    if hasattr(module, "gate_up_proj"):
+        return True
+    # Fused containers expose num_experts + down_proj but are not per-expert ModuleLists.
+    return (
+        hasattr(module, "num_experts")
+        and hasattr(module, "down_proj")
+        and not isinstance(module, nn.ModuleList)
+    )
+
+
+def moe_block_uses_fused_experts(module) -> bool:
+    """Return True when a MoE block must use _QuantFusedExperts on ``.experts``.
+
+    Parent blocks may be named ``*SparseMoeBlock`` (Qwen3, DeepSeek) while the
+    ``experts`` child is a fused 3-D container — same pattern as export
+    ``layer_utils.get_expert_linear_names``.
+    """
+    experts = getattr(module, "experts", None)
+    if experts is None:
+        return False
+    return _looks_like_fused_moe_experts(experts)
+
+
+def _is_sparse_sequaential_moe_block(module):
+    """Check if a module is structurally a sparse sequential MoE block compatible with _QuantSparseSequentialMoe.
+
+    All HuggingFace MoE blocks (Mixtral, Qwen3Moe, Qwen2Moe, Qwen3Next, Llama4, MiniMax,
+    NemotronH, etc.) share a common structural pattern: a ``gate`` (TopKRouter) sub-module with
+    routing attributes (``top_k`` and ``num_experts`` or ``n_routed_experts``), and an ``experts``
+    sub-module.
+
+    This function detects that pattern instead of relying on class names, making it forward-compatible
+    with new MoE architectures.
+    """
+    if not hasattr(module, "experts"):
+        return False
+
+    if moe_block_uses_fused_experts(module):
+        return False
+
+    experts = module.experts
+
+    # Sparse sequential MoE uses a per-expert ``nn.ModuleList`` (v4-style), not fused 3-D tensors.
+    if not isinstance(experts, nn.ModuleList):
+        return False
+
+    # Primary: gate sub-module has topk/top_k + num_experts (standard TopKRouter pattern)
+    if hasattr(module, "gate"):
+        gate = module.gate
+        if hasattr(gate, "top_k") and _has_num_experts(gate):
+            return True
+
+    # Fallback: top_k + num_experts on the block itself (older transformers, e.g. v4.x Qwen3Next)
+    if hasattr(module, "top_k"):
+        if not _has_num_experts(module) and hasattr(module.experts, "__len__"):
+            module.num_experts = len(module.experts)
+        return _has_num_experts(module)
+
+    return False
+
+
+def register_sparse_moe_on_the_fly(model):
+    """Auto-detect and register MOE modules as _QuantSparseSequentialMoe.
+
+    Walks the model tree, identifies MoE blocks by their structural attributes
+    (``gate`` + ``experts``), and registers unregistered ones with ``_QuantSparseSequentialMoe``.
+    """
+    visited_types = set()
+    for name, module in model.named_modules():
+        mod_type = type(module)
+
+        # Avoid duplicate registration: skip if we already processed this type
+        # in this walk, or if it was previously registered in the QuantModuleRegistry.
+        if mod_type in visited_types or QuantModuleRegistry.get(mod_type) is not None:
+            continue
+
+        visited_types.add(mod_type)
+
+        if moe_block_uses_fused_experts(module):
+            continue
+
+        if _is_sparse_sequaential_moe_block(module):
+            print(
+                f"\033[1mDetected MOE module '{name}' of type {mod_type.__name__}, "
+                f"registering with _QuantSparseSequentialMoe.\033[0m"
+            )
+            QuantModuleRegistry.register({mod_type: f"hf.{mod_type.__name__}"})(
+                _QuantSparseSequentialMoe
+            )
+
+
 def register_fused_experts_on_the_fly(model):
     """Auto-detect and register fused MoE expert modules as _QuantFusedExperts.
 
@@ -1691,6 +1746,8 @@ def register_fused_experts_on_the_fly(model):
         visited_types.add(mod_type)
 
         wrapper_cls = _fused_experts_wrapper_class(module)
+        if wrapper_cls is None:
+            wrapper_cls = _wrapper_class_for_known_fused_moe_experts(module)
         if wrapper_cls is not None:
             print(
                 f"\033[1mDetected fused MoE experts '{name}' of type {mod_type.__name__}, "

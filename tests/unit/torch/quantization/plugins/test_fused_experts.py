@@ -33,8 +33,11 @@ from modelopt.torch.quantization.nn import QuantModuleRegistry, TensorQuantizer
 from modelopt.torch.quantization.plugins.huggingface import (
     _fused_experts_wrapper_class,
     _is_fused_experts_module,
+    _is_known_fused_moe_experts_type,
     _is_sparse_sequaential_moe_block,
     _looks_like_fused_moe_experts,
+    _wrapper_class_for_known_fused_moe_experts,
+    moe_block_uses_fused_experts,
     _QuantFusedExperts,
     _QuantNonGatedFusedExperts,
     force_eager_experts_impl_on_the_fly,
@@ -267,6 +270,41 @@ class TestIsFusedExpertsModule:
 
         assert _looks_like_fused_moe_experts(experts) is True
         assert _is_sparse_sequaential_moe_block(block) is False
+
+    def test_known_fused_expert_type_name_without_gate_up_attr(self):
+        """Type-name registry must win over sparse heuristics (Qwen3/DeepSeek v5)."""
+
+        class Qwen3MoeExperts(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = NUM_EXPERTS
+                self.down_proj = nn.Parameter(torch.randn(NUM_EXPERTS, HIDDEN_DIM, INTERMEDIATE_DIM))
+
+        experts = Qwen3MoeExperts()
+        assert _is_known_fused_moe_experts_type(experts) is True
+        assert _looks_like_fused_moe_experts(experts) is True
+        assert _fused_experts_wrapper_class(experts) is None
+        assert _wrapper_class_for_known_fused_moe_experts(experts) is _QuantFusedExperts
+
+        block = nn.Module()
+        block.gate = _SyntheticTopKRouter()
+        block.experts = experts
+        assert moe_block_uses_fused_experts(block) is True
+        assert _is_sparse_sequaential_moe_block(block) is False
+
+    def test_deepseek_naive_moe_type_name_uses_fused_path(self):
+        class DeepseekV3NaiveMoe(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = NUM_EXPERTS
+                self.gate_up_proj = nn.Parameter(
+                    torch.randn(NUM_EXPERTS, 2 * INTERMEDIATE_DIM, HIDDEN_DIM)
+                )
+                self.down_proj = nn.Parameter(torch.randn(NUM_EXPERTS, HIDDEN_DIM, INTERMEDIATE_DIM))
+
+        experts = DeepseekV3NaiveMoe()
+        assert _is_known_fused_moe_experts_type(experts) is True
+        assert moe_block_uses_fused_experts(nn.Module(experts=experts, gate=_SyntheticTopKRouter())) is True
 
 
 # ---------------------------------------------------------------------------
