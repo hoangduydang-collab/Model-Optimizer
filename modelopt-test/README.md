@@ -23,6 +23,8 @@ Model-Optimizer/modelopt-test/
 - This repo on the cluster, e.g. `/mnt/nfs/hoangduy/projects/Model-Optimizer` (duy-branch)
 - `Qwen/Qwen3-30B-A3B` in HF cache (from the llm-compressor run)
 
+**Cluster note:** bare `pip` is not on PATH. Use `bash setup_env.sh` (runs `uv pip`) or after `source modelopt-test/_env.sh` use `uv pip` / `python -m pip` — never `pip install` alone.
+
 Scripts resolve the repo root automatically (`modelopt-test/..`). The venv is **project-local** at `Model-Optimizer/.venv` (gitignored) so it does not collide with `venvs/main` from `env.sh`.
 
 ## Step 1 — Environment (you)
@@ -32,7 +34,9 @@ cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash setup_env.sh
 ```
 
-Creates or reuses `<repo>/.venv`. To force a clean rebuild:
+Creates or reuses `<repo>/.venv`. `flash-attn` is built with `--no-build-isolation` (needs torch from `modelopt[hf]`). If it is already in the venv, setup skips the rebuild. Deploy-only refresh: `SKIP_FLASH_ATTN=1 bash setup_env.sh`.
+
+To force a clean rebuild:
 
 ```bash
 RECREATE_VENV=1 bash setup_env.sh

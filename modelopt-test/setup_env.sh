@@ -40,7 +40,17 @@ echo "=== installing Model Optimizer (editable) ==="
 "$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
 
 echo "=== installing hf_ptq example requirements ==="
-"$UV" pip install -r "${MODEL_OPT_REPO}/examples/hf_ptq/requirements.txt"
+# flash-attn's setup imports torch but does not declare it as a build dependency.
+# modelopt[hf] installs torch above; use --no-build-isolation so the build sees it.
+"$UV" pip install compressed-tensors fire transformers_stream_generator zstandard
+if [[ "${SKIP_FLASH_ATTN:-0}" == "1" ]]; then
+  echo "SKIP_FLASH_ATTN=1: not installing flash-attn"
+elif python -c "import flash_attn" 2>/dev/null; then
+  echo "flash-attn already installed"
+else
+  echo "=== building flash-attn (--no-build-isolation) ==="
+  "$UV" pip install 'flash-attn>=2.6.0' --no-build-isolation
+fi
 
 echo "=== installing mpi4py (required by modelopt.deploy.llm) ==="
 "$UV" pip install mpi4py
