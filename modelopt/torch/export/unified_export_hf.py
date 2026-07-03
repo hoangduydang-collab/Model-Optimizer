@@ -92,6 +92,7 @@ from .model_utils import _reorder_canonical_first, get_language_model_from_vl, i
 from .moe_utils import _export_fused_experts
 from .plugins import SpeculativeDecodingExporter, has_spec_opt, sanitize_hf_config_for_deployment
 from .quant_utils import (
+    filter_internal_quantizer_keys_from_export_state_dict,
     fuse_prequant_layernorm,
     fuse_prequant_to_linear,
     get_activation_scaling_factor,
@@ -1521,10 +1522,14 @@ def export_hf_checkpoint(
 
         _sanitize_generation_config_for_save(model)
 
+        export_state_dict = filter_internal_quantizer_keys_from_export_state_dict(
+            {**post_state_dict, **(extra_state_dict or {})}
+        )
+
         try:
             model.save_pretrained(
                 export_dir,
-                state_dict={**post_state_dict, **(extra_state_dict or {})},
+                state_dict=export_state_dict,
                 save_modelopt_state=save_modelopt_state,
                 max_shard_size=max_shard_size,
             )

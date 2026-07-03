@@ -121,7 +121,19 @@ def restore_calib_checkpoint(model: torch.nn.Module, export_path: str | Path) ->
             "Run hf_ptq without --export_only first (saves checkpoint by default)."
         )
     print(f"Restoring calibrated model from {path}...")
-    restored = mto.restore(model, path)
+    try:
+        restored = mto.restore(model, path)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "weight_quantizers" in msg or "Unexpected key" in msg or "Unmatched keys" in msg:
+            raise RuntimeError(
+                f"Failed to restore calibration checkpoint: {path}. "
+                "The saved quantizer layout may be incompatible with the current "
+                "Model-Optimizer/transformers version (e.g. fused MoE vs sparse sequential). "
+                "Sync the latest Model-Optimizer (fused-experts restore fix) or re-run "
+                "`bash run_quant.sh` (~1.5h)."
+            ) from exc
+        raise
     print(f"Restored calibration checkpoint from {path}")
     return restored
 

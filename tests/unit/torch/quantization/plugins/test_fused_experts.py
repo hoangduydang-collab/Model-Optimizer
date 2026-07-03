@@ -241,6 +241,18 @@ class TestIsFusedExpertsModule:
         block = _SyntheticSparseMoeBlock()
         assert _is_sparse_sequaential_moe_block(block) is False
 
+    def test_fused_moe_block_with_iterable_experts_not_detected_as_sequential(self):
+        """Newer transformers may make fused experts iterable; still use fused path only."""
+
+        class _IterableFusedExperts(_SyntheticFusedExperts):
+            def __iter__(self):
+                return iter(range(self.num_experts))
+
+        block = _SyntheticSparseMoeBlock()
+        block.experts = _IterableFusedExperts()
+        assert _is_sparse_sequaential_moe_block(block) is False
+        assert _is_fused_experts_module(block.experts) is True
+
 
 # ---------------------------------------------------------------------------
 # Tests for registration and quantization

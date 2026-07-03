@@ -135,6 +135,14 @@ scale). Re-export from the saved calibration checkpoint (~minutes, no re-calib):
 bash modelopt-test/run_export_only.sh
 ```
 
+If export fails with a huge list of ``*_weight_quantizers.*`` keys, sync the latest
+``modelopt/torch/export/quant_utils.py`` export filter fix and retry ``run_export_only.sh``.
+
+If restore fails with ``Unmatched keys in quantizer state_dict`` and you see
+``_QuantSparseSequentialMoe`` / ``56214 quantizers`` instead of ``_QuantFusedExperts`` /
+``13158 quantizers``, sync ``modelopt/torch/quantization/plugins/huggingface.py``
+(fused-experts detection fix) and retry.
+
 Or: `sbatch modelopt-test/slurm/deploy.sbatch` (from repo root).
 
 ## Step 5 — Triage if Gate C fails

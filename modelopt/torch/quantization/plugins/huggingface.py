@@ -1561,6 +1561,13 @@ def _is_sparse_sequaential_moe_block(module):
         # transformers>=5.0 has batched experts, no per-expert quantizers
         return False
 
+    # Fused 3-D expert containers (gate_up_proj + down_proj) are wrapped by
+    # _QuantFusedExperts on the experts submodule. Do not also register the
+    # parent MoE block as _QuantSparseSequentialMoe — newer transformers makes
+    # fused experts iterable for indexing, which would otherwise mis-detect.
+    if _is_fused_experts_module(module.experts):
+        return False
+
     # Primary: gate sub-module has topk/top_k + num_experts (standard TopKRouter pattern)
     if hasattr(module, "gate"):
         gate = module.gate

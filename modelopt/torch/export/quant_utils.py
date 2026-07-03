@@ -16,6 +16,7 @@
 """Utils for quantization including scaling factors adjustments."""
 
 import logging
+import re
 from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any
@@ -72,6 +73,25 @@ from .model_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ModelOpt fused MoE / SequentialQuantizer state that must not ship in HF checkpoints.
+_INTERNAL_QUANTIZER_EXPORT_KEY = re.compile(
+    r"(?:^|\.)(?:\w+_)?weight_quantizers?\.\d+"
+    r"|(?:^|\.)(?:gate_up_proj|up_proj|down_proj)_input_quantizer\b"
+    r"|\.weight_quantizer\."
+)
+
+
+def is_internal_quantizer_export_key(key: str) -> bool:
+    """Return True for ModelOpt quantizer state keys that HF export must drop."""
+    return bool(_INTERNAL_QUANTIZER_EXPORT_KEY.search(key))
+
+
+def filter_internal_quantizer_keys_from_export_state_dict(
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Remove internal quantizer tensors that ``save_pretrained`` rejects."""
+    return {k: v for k, v in state_dict.items() if not is_internal_quantizer_export_key(k)}
 
 
 def get_scaling_factor_from_weight(weight, group_size) -> torch.tensor:
@@ -1001,6 +1021,9 @@ def postprocess_state_dict(
     post_state_dict = {}
 
     for key, value in state_dict.items():
+        if is_internal_quantizer_export_key(key):
+            continue
+
         # Skip problematic parameters for specific model architectures, e.g., Nemotron Nano VL models
         if key == "vision_model.radio_model.summary_idxs":
             logger.info(f"Removing problematic parameter: {key}")
