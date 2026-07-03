@@ -252,7 +252,11 @@ Applied automatically by `modelopt-test/setup_env_deploy.sh`.
 | A: AWQ calib + save `.pth` | **Done** | h104, ~1.5h, 13158 quantizers, `Qwen3MoeExperts` |
 | A: HF export | **Blocked → unblocked** | Export bugs fixed; blocked on transformers align + re-export |
 | C: TRT-LLM load | **Pass** | 873 modules, ~24s |
-| C: Generation quality | **Fail** | Repetitive tokens — **re-export** from calib cache (v2 scale fusion) |
+| C: Generation quality | **Fail** | Repetitive tokens — re-calib v2 in progress (`run_quant_qwen3_w4a8.sh`) |
+
+### pile dataset config (2026-07-03)
+
+`monology/pile-uncopyrighted` no longer exposes config `v1.0` (only `default`). Fixed in `dataset_utils.py`.
 
 ---
 

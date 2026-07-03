@@ -278,7 +278,8 @@ SUPPORTED_DATASET_CONFIG: dict[str, Any] = {
         "preprocess": lambda sample: sample["article"],
     },
     "pile": {
-        "config": {"path": "monology/pile-uncopyrighted", "name": "v1.0", "split": ["train"]},
+        # monology/pile-uncopyrighted exposes BuilderConfig "default" (not "v1.0").
+        "config": {"path": "monology/pile-uncopyrighted", "name": "default", "split": ["train"]},
         "preprocess": lambda sample: sample["text"],
     },
     "pg19": {
