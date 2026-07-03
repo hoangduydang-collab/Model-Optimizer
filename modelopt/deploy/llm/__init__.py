@@ -17,6 +17,10 @@
 
 from mpi4py import MPI
 
+from modelopt.deploy.transformers_compat import apply_transformers_compat
+
+apply_transformers_compat()
+
 # Pre import tensorrt_llm
 try:
     import tensorrt_llm

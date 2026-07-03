@@ -11,6 +11,7 @@ Model-Optimizer/modelopt-test/
   setup_env.sh
   run_quant.sh
   run_export_only.sh   # retry export without re-calib (needs .modelopt_calib_checkpoint.pth)
+  upgrade_deploy_env.sh  # pin transformers 5.x + patch TRT-LLM 1.2.1 for deploy
   inspect_ckpt.py
   deploy_trtllm.py
   run_control_int4.sh
@@ -32,6 +33,12 @@ Scripts resolve the repo root automatically (`modelopt-test/..`). The venv is **
 ```bash
 cd /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test
 bash setup_env.sh
+```
+
+**Already have a venv but deploy fails on transformers 5.x import?** Run the controlled upgrade (keeps TRT-LLM 1.2.1 on CUDA 12, pins transformers 5.x, patches TRT-LLM in-place):
+
+```bash
+bash modelopt-test/upgrade_deploy_env.sh
 ```
 
 Creates or reuses `<repo>/.venv`. **Default setup is deploy-only** (TensorRT-LLM + patches; skips `hf_ptq` / `flash-attn` so torch is not upgraded to an incompatible CUDA 13 stack).

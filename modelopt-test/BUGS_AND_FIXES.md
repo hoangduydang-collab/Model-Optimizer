@@ -272,6 +272,58 @@ python modelopt-test/deploy_trtllm.py \
 
 ---
 
+## Bug #7 — TRT-LLM import fails on transformers 5.x
+
+### Symptoms
+
+```
+ImportError: cannot import name 'AutoModelForVision2Seq' from 'transformers'
+```
+
+When running `apply_trtllm_qwen_moe_patches()` or `deploy_trtllm.py` after upgrading to `transformers>=5.0` for fused MoE export.
+
+### Root cause
+
+**Conflicting requirements:**
+
+- ModelOpt Qwen3 MoE calib/export/restore needs **transformers ≥ 5.0** (`Qwen3MoeExperts`)
+- TensorRT-LLM **1.2.x** still imports `AutoModelForVision2Seq`, removed in transformers 5.0 (renamed to `AutoModelForImageTextToText`)
+
+### Fix
+
+**Root cause:** TRT-LLM stable wheels hard-import removed transformers 5.x symbols; ModelOpt needs transformers ≥ 5.0 for fused MoE.
+
+**Long-term fix (CUDA 12 / H100):** Stay on `tensorrt-llm==1.2.1` (latest CUDA-12 line). Pin `transformers>=5.0,<5.13`. Apply **install-time** patch to TRT-LLM (`modelopt/deploy/trtllm_transformers5_patch.py`) — same pattern as NVIDIA upstream commit 58f7ccb. Run `bash modelopt-test/upgrade_deploy_env.sh`.
+
+**Not viable on Polaris:** `tensorrt-llm>=1.3` requires CUDA 13 / torch cu130; PyPI 1.3.x still pins `transformers==4.57.3`.
+
+**Runtime fallback:** `modelopt/deploy/transformers_compat.py` — only if install-time patch was not applied.
+
+Wired into `setup_env.sh`, `upgrade_deploy_env.sh`, `trtllm_qwen_moe_patch.py`, and `deploy/llm/__init__.py`.
+
+**Immediate workaround** (before pulling fix):
+
+```bash
+python -c "
+from modelopt.deploy.transformers_compat import apply_transformers_compat
+print(apply_transformers_compat())
+from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
+print(apply_trtllm_qwen_moe_patches())
+"
+```
+
+Or manual shim:
+
+```bash
+python -c "
+import transformers
+from transformers import AutoModelForImageTextToText
+transformers.AutoModelForVision2Seq = AutoModelForImageTextToText
+"
+```
+
+---
+
 ## Related docs
 
 - `modelopt_migration_assessment.md` — strategic migration assessment (llm-compressor → ModelOpt)

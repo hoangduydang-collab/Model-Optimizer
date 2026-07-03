@@ -60,6 +60,12 @@ def main() -> int:
     print(f"tp={args.tp} prompt={args.prompt!r}")
     print("quant summary:", json.dumps(_load_quant_summary(ckpt), indent=2))
 
+    from modelopt.deploy.transformers_compat import apply_transformers_compat
+
+    compat = apply_transformers_compat()
+    if compat:
+        print("transformers runtime compat (install-time patch missing):", ", ".join(compat))
+
     quant_summary = _load_quant_summary(ckpt)
     if quant_summary.get("quant_algo") == "W4A8_AWQ":
         from modelopt.torch.export.trtllm_w4a8_moe import rewrite_checkpoint_for_trtllm_w4a8_custom

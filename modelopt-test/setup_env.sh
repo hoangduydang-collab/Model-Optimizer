@@ -58,13 +58,29 @@ echo "=== installing mpi4py (required by modelopt.deploy.llm) ==="
 "$UV" pip install mpi4py
 
 echo "=== installing TensorRT-LLM (NVIDIA PyPI) ==="
-"$UV" pip install tensorrt-llm --extra-index-url https://pypi.nvidia.com
+TENSORRT_LLM_SPEC="${TENSORRT_LLM_SPEC:-tensorrt-llm==1.2.1}"
+echo "TENSORRT_LLM_SPEC=$TENSORRT_LLM_SPEC"
+"$UV" pip install "${TENSORRT_LLM_SPEC}" --extra-index-url https://pypi.nvidia.com
 
 echo "=== installing CUDA runtime libs for tensorrt-llm wheels ==="
 "$UV" pip install nvidia-cublas nvidia-cudnn --extra-index-url https://pypi.nvidia.com
 
 echo "=== re-pin local Model Optimizer (tensorrt-llm may replace PyPI modelopt) ==="
+"$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
 "$UV" pip install -e "${MODEL_OPT_REPO}[hf]"
+
+echo "=== pin transformers (fused Qwen3MoeExperts requires >= 5.0) ==="
+TRANSFORMERS_SPEC="${TRANSFORMERS_SPEC:-transformers>=5.0,<5.13}"
+NO_UPGRADE=(
+  --no-upgrade-package torch
+  --no-upgrade-package triton
+  --no-upgrade-package cuda-toolkit
+  --no-upgrade-package nvidia-cublas
+  --no-upgrade-package nvidia-cuda-runtime
+  --no-upgrade-package nvidia-cuda-nvrtc
+  --no-upgrade-package nvidia-nccl-cu13
+)
+"$UV" pip install "${NO_UPGRADE[@]}" "${TRANSFORMERS_SPEC}"
 
 if [[ "${INSTALL_HF_PTQ:-0}" == "1" ]]; then
   echo "=== installing hf_ptq example requirements (optional quant path) ==="
@@ -104,22 +120,27 @@ source "${MODELOPT_VENV}/bin/activate"
 source "${SCRIPT_DIR}/_env.sh"
 python - <<'PY'
 import modelopt
+import transformers
 import tensorrt_llm
 from modelopt.deploy.llm import LLM  # noqa: F401
 import torch
 
 print("modelopt:", getattr(modelopt, "__version__", "unknown"))
+print("transformers:", transformers.__version__)
 print("tensorrt_llm:", tensorrt_llm.__version__)
 print("torch:", torch.__version__, "cuda:", torch.version.cuda)
 print("import OK")
 PY
 
-echo "=== applying TRT-LLM Qwen MoE W4A8_CUSTOM patches ==="
+echo "=== applying TRT-LLM patches (transformers 5.x + Qwen MoE W4A8_CUSTOM) ==="
 python - <<'PY'
+from modelopt.deploy.trtllm_transformers5_patch import apply_trtllm_transformers5_compat_patch
 from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
 
-patched = apply_trtllm_qwen_moe_patches()
-print(patched or "already patched")
+t5 = apply_trtllm_transformers5_compat_patch()
+w4 = apply_trtllm_qwen_moe_patches()
+print("transformers5:", t5 or "already applied")
+print("W4A8_CUSTOM:", w4 or "already applied")
 PY
 
 echo "=== done ==="
