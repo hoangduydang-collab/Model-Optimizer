@@ -15,6 +15,9 @@ fi
 
 unset MODELOPT_VENV
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_cache_helpers.sh"
+_clear_stale_flashinfer_cache "${MODEL_OPT_REPO}"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/_env_deploy.sh"
 
 exec "${DEPLOY_VENV}/bin/python" "${SCRIPT_DIR}/deploy_trtllm.py" "$@"

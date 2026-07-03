@@ -302,7 +302,36 @@ bash modelopt-test/run_deploy.sh \
 
 ---
 
-## Bug #7 — TRT-LLM import fails on transformers 5.x
+## Bug #9 — flashinfer JIT cache points at deleted `.venv`
+
+### Symptoms
+
+Model loads (~873 shards, ~38s) then fails on warmup:
+
+```
+ninja: error: '.../Model-Optimizer/.venv/lib/python3.12/site-packages/flashinfer/data/csrc/norm.cu' ... missing
+RuntimeError: Ninja build failed
+```
+
+### Root cause
+
+`~/.cache/flashinfer/` (on cluster: `/mnt/nfs/hoangduy/.cache/flashinfer/`) stores JIT `build.ninja` files with **absolute paths** into the old `.venv`. Deleting `.venv` without clearing this cache breaks TRT-LLM warmup.
+
+### Fix
+
+```bash
+rm -rf ~/.cache/flashinfer
+# or
+bash modelopt-test/remove_legacy_venv.sh   # clears cache if stale refs detected
+
+bash modelopt-test/run_deploy.sh \
+  --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
+  --tp 2 --prompt "The capital of France is"
+```
+
+`run_deploy.sh` auto-clears stale flashinfer cache when it finds legacy `.venv` paths.
+
+---
 
 ### Symptoms
 

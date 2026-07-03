@@ -14,8 +14,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_OPT_REPO="${MODEL_OPT_REPO:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 LEGACY_VENV="${MODEL_OPT_REPO}/.venv"
 
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_cache_helpers.sh"
+
 if [[ ! -d "${LEGACY_VENV}" ]]; then
-  echo "No legacy .venv at ${LEGACY_VENV} (nothing to do)"
+  echo "No legacy .venv at ${LEGACY_VENV}"
+  _clear_stale_flashinfer_cache "${MODEL_OPT_REPO}"
   exit 0
 fi
 
@@ -40,5 +44,6 @@ fi
 
 rm -rf "${LEGACY_VENV}"
 echo "Removed ${LEGACY_VENV}"
+_clear_stale_flashinfer_cache "${MODEL_OPT_REPO}"
 echo "Use: source modelopt-test/_env_quant.sh  (Gate A)"
 echo "     bash modelopt-test/run_deploy.sh ... (Gate C)"

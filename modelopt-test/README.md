@@ -128,6 +128,7 @@ See `BUGS_AND_FIXES.md` for known issues (MoE detection, scale fusion, restore m
 
 - **Restore/export MoE mismatch:** use **quant venv** only; verify `Qwen3MoeExperts` + transformers 5.x.
 - **TRT-LLM import errors:** use **deploy venv** only; run `bash upgrade_deploy_env.sh`.
+- **flashinfer ninja / missing norm.cu after deleting `.venv`:** `rm -rf ~/.cache/flashinfer` then re-run `run_deploy.sh`.
 - **Garbage generation:** re-export from calib cache (`run_export_only.sh`).
 
 ## Step 5 — Triage if Gate C fails
