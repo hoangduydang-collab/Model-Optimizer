@@ -25,8 +25,8 @@ _pin_transformers_for_moe() {
       --no-upgrade-package nvidia-nccl-cu13 \
       "${spec}"
   else
-    echo "Note: uv lacks --no-upgrade-package; using python -m pip for transformers pin"
-    python -m pip install "${spec}"
+    echo "Note: uv lacks --no-upgrade-package; using uv pip install (torch should stay pinned)"
+    "$UV" pip install "${spec}"
   fi
 }
 
@@ -43,7 +43,7 @@ _uv_pip_install_hf_ptq_extras() {
       --no-upgrade-package nvidia-nccl-cu13 \
       "${packages[@]}"
   else
-    echo "Note: uv lacks --no-upgrade-package; using python -m pip for hf_ptq extras"
-    python -m pip install "${packages[@]}"
+    echo "Note: uv lacks --no-upgrade-package; using uv pip install for hf_ptq extras"
+    "$UV" pip install "${packages[@]}"
   fi
 }
