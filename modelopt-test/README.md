@@ -110,8 +110,9 @@ python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/inspect_ckpt.py 
 ## Step 4 — Gate C: TensorRT-LLM deploy (2 GPUs)
 
 W4A8_AWQ MoE checkpoints are exported with TRT-LLM ``W4A8_CUSTOM`` scale layout
-(``weight_scale_inv``, fused ``input_scale``). ``setup_env.sh`` patches installed
-TensorRT-LLM so Qwen MoE selects ``W4A8_CUSTOM`` (same as DeepSeek V3).
+(``weight_scale_inv``, gate/up ``input_scale`` = activation only, down ``input_scale``
+with ``weight_scale_2`` folded in). ``setup_env.sh`` patches installed TensorRT-LLM
+so Qwen MoE selects ``W4A8_CUSTOM`` (same as DeepSeek V3).
 
 ```bash
 python /mnt/nfs/hoangduy/projects/Model-Optimizer/modelopt-test/deploy_trtllm.py \
@@ -124,6 +125,14 @@ For checkpoints exported **before** this integration, rewrite scales once:
 
 ```bash
 python modelopt-test/trtllm_w4a8_moe_custom.py /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq --force
+```
+
+If deploy loads but generation is garbage (repeated tokens), the checkpoint likely has
+incorrect gate/up ``input_scale`` (``weight_scale_2`` was wrongly fused into activation
+scale). Re-export from the saved calibration checkpoint (~minutes, no re-calib):
+
+```bash
+bash modelopt-test/run_export_only.sh
 ```
 
 Or: `sbatch modelopt-test/slurm/deploy.sbatch` (from repo root).

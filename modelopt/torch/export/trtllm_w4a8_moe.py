@@ -3,9 +3,9 @@
 """TensorRT-LLM W4A8_CUSTOM layout for folded ModelOpt AWQ MoE checkpoints.
 
 ModelOpt W4A8_AWQ export folds AWQ ``pre_quant_scale`` into LayerNorm. TRT-LLM's
-``MoEWeightLoadingMode.W4A8_CUSTOM`` path (DeepSeek V3) expects that layout:
-``weight_scale_inv``, fused ``input_scale`` (``input_scale * weight_scale_2``),
-and no ``pre_quant_scale`` / ``weight_scale_2``.
+``MoEWeightLoadingMode.W4A8_CUSTOM`` path expects ``weight_scale_inv``, tied
+gate/up ``input_scale`` (activation only), and down ``input_scale`` with
+``weight_scale_2`` folded into it. Gate/up ``weight_scale_2`` is unused by CUSTOM.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 _MARKER = ".trtllm_w4a8_custom_prepared.json"
+_MARKER_VERSION = "trtllm_w4a8_custom_v2"
 _EXPERT_PROJ_RE = re.compile(
     r"^(?P<prefix>model\.layers\.\d+\.mlp\.experts\.\d+\."
     r"(?:gate_proj|up_proj|down_proj))\.(?P<suffix>.+)$"
@@ -44,14 +45,11 @@ def _max_tensors(*tensors: torch.Tensor) -> torch.Tensor:
 
 
 def _canonical_gate_up_input_scale(parts: dict[str, torch.Tensor]) -> torch.Tensor | None:
+    """Tie gate/up activation scales only (CUSTOM fc31_alpha = input_scale, not * weight_scale_2)."""
     inputs = [parts[k] for k in ("gate_proj.input_scale", "up_proj.input_scale") if k in parts]
     if not inputs:
         return None
-    shared_input = _max_tensors(*inputs)
-    w2s = [parts[k] for k in ("gate_proj.weight_scale_2", "up_proj.weight_scale_2") if k in parts]
-    if not w2s:
-        return shared_input
-    return _fuse_input_scale(shared_input, _max_tensors(*w2s))
+    return _max_tensors(*inputs)
 
 
 def _canonical_down_input_scale(parts: dict[str, torch.Tensor]) -> torch.Tensor | None:
@@ -210,7 +208,12 @@ def rewrite_checkpoint_for_trtllm_w4a8_custom(
 
     marker = ckpt / _MARKER
     if marker.exists() and not force:
-        return True
+        try:
+            with marker.open(encoding="utf-8") as fh:
+                if json.load(fh).get("format") == _MARKER_VERSION:
+                    return True
+        except (json.JSONDecodeError, OSError):
+            pass
 
     shard_paths = _list_weight_shards(ckpt)
     if not shard_paths:
@@ -274,7 +277,7 @@ def rewrite_checkpoint_for_trtllm_w4a8_custom(
     marker.write_text(
         json.dumps(
             {
-                "format": "trtllm_w4a8_custom",
+                "format": _MARKER_VERSION,
                 "changed_tensors": total_changed,
             },
             indent=2,

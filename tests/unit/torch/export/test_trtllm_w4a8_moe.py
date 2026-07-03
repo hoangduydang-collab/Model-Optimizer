@@ -22,7 +22,7 @@ def test_postprocess_state_dict_for_trtllm_w4a8_moe_fuses_gate_up_scales():
 
     out = postprocess_state_dict_for_trtllm_w4a8_moe(sd)
 
-    expected_gate_up = torch.tensor(2.0)  # max(0.5, 0.25) * max(2, 4)
+    expected_gate_up = torch.tensor(0.5)  # max(0.5, 0.25); CUSTOM fc31_alpha is activation scale only
     assert torch.equal(out[f"{prefix}.gate_proj.input_scale"], expected_gate_up)
     assert torch.equal(out[f"{prefix}.up_proj.input_scale"], expected_gate_up)
     assert torch.equal(out[f"{prefix}.down_proj.input_scale"], torch.tensor(0.3))
