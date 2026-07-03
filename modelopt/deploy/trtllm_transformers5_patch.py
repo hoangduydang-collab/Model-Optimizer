@@ -6,13 +6,15 @@ Upstream TRT-LLM merged this pattern on main (commit 58f7ccb); stable PyPI wheel
 (1.2.1, 1.3.0rc*) still hard-import ``AutoModelForVision2Seq``. ModelOpt Qwen3 MoE
 requires transformers >= 5.0 (``Qwen3MoeExperts``).
 
-Prefer patching installed ``tensorrt_llm`` at setup time over a runtime alias in
-ModelOpt — same fix NVIDIA ships, applied once per venv.
+Edits site-packages files directly — does not ``import tensorrt_llm`` (avoids circular
+init during setup).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+
+from modelopt.deploy.trtllm_install_paths import find_tensorrt_llm_root
 
 TRANSFORMERS5_PATCH_MARKER = "# modelopt: transformers5 AutoModelForVision2Seq compat"
 
@@ -65,14 +67,20 @@ def _patch_file(path: Path, old: str, new: str) -> bool:
     return True
 
 
+def trtllm_transformers5_patch_applied() -> bool:
+    """Return True if convert.py already contains the install-time compat patch."""
+    try:
+        convert_path = find_tensorrt_llm_root() / "models" / "gpt" / "convert.py"
+    except RuntimeError:
+        return False
+    if not convert_path.is_file():
+        return False
+    return TRANSFORMERS5_PATCH_MARKER in convert_path.read_text(encoding="utf-8")
+
+
 def apply_trtllm_transformers5_compat_patch() -> list[str]:
     """Patch installed TensorRT-LLM for transformers 5.x import compatibility."""
-    from modelopt.deploy.transformers_compat import apply_transformers_compat
-
-    apply_transformers_compat()
-    import tensorrt_llm
-
-    root = Path(tensorrt_llm.__file__).resolve().parent
+    root = find_tensorrt_llm_root()
     changed: list[str] = []
 
     convert_path = root / "models" / "gpt" / "convert.py"
@@ -84,18 +92,6 @@ def apply_trtllm_transformers5_compat_patch() -> list[str]:
         changed.append(str(multimodal_path))
 
     return changed
-
-
-def trtllm_transformers5_patch_applied() -> bool:
-    """Return True if convert.py already contains the install-time compat patch."""
-    try:
-        import tensorrt_llm
-    except ImportError:
-        return False
-    convert_path = Path(tensorrt_llm.__file__).resolve().parent / "models" / "gpt" / "convert.py"
-    if not convert_path.is_file():
-        return False
-    return TRANSFORMERS5_PATCH_MARKER in convert_path.read_text(encoding="utf-8")
 
 
 def main() -> int:

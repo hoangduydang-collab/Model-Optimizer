@@ -68,6 +68,9 @@ print(f"  modelopt.__file__: {modelopt.__file__}")
 PY
 
 echo "=== 5/5 apply TRT-LLM patches ==="
+export PYTHONPATH="${MODEL_OPT_REPO}${PYTHONPATH:+:$PYTHONPATH}"
+"$UV" pip uninstall -y nvidia-modelopt 2>/dev/null || true
+"$UV" pip install -e "${MODEL_OPT_REPO}[hf]" --quiet
 python - <<'PY'
 from modelopt.deploy.trtllm_transformers5_patch import apply_trtllm_transformers5_compat_patch
 from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches

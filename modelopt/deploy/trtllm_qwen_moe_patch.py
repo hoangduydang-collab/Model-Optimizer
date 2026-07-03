@@ -217,12 +217,9 @@ def _patch_w4a8_custom_weight_layout(path: Path) -> bool:
 
 def apply_trtllm_qwen_moe_patches() -> list[str]:
     """Patch installed TensorRT-LLM to use W4A8_CUSTOM for folded-AWQ Qwen MoE."""
-    from modelopt.deploy.transformers_compat import apply_transformers_compat
+    from modelopt.deploy.trtllm_install_paths import find_tensorrt_llm_root
 
-    apply_transformers_compat()
-    import tensorrt_llm
-
-    root = Path(tensorrt_llm.__file__).resolve().parent
+    root = find_tensorrt_llm_root()
     changed: list[str] = []
 
     qwen3_path = root / "_torch" / "models" / "modeling_qwen3_moe.py"
