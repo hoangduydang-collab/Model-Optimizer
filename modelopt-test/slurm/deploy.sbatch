@@ -26,7 +26,7 @@ TP="${TP:-2}"
 echo "host=$(hostname) job=${SLURM_JOB_ID:-none}"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv || true
 
-python "${TEST_DIR}/deploy_trtllm.py" \
+bash "${TEST_DIR}/run_deploy.sh" \
   --checkpoint_dir "$CHECKPOINT_DIR" \
   --tp "$TP" \
   --prompt "The capital of France is"

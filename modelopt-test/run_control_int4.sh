@@ -15,7 +15,7 @@ echo "=== Control deploy (paste output back) ==="
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/_env_deploy.sh"
 
-python "${SCRIPT_DIR}/deploy_trtllm.py" \
+bash "${SCRIPT_DIR}/run_deploy.sh" \
   --checkpoint_dir "$EXPORT_PATH" \
   --tp 2 \
   --prompt "The capital of France is"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -48,7 +49,45 @@ def _load_quant_summary(ckpt: Path) -> dict:
     }
 
 
+def _assert_deploy_venv() -> str | None:
+    """Fail fast when a stale legacy .venv poisons imports (common in interactive SSH)."""
+    prefix = Path(sys.prefix).resolve()
+    executable = Path(sys.executable).resolve()
+    expected = os.environ.get("MODELOPT_VENV", "").strip()
+    legacy_markers = (
+        "/Model-Optimizer/.venv/lib/",
+        "/Model-Optimizer/.venv/bin/",
+    )
+    for entry in sys.path:
+        if any(marker in entry for marker in legacy_markers):
+            return (
+                f"sys.path includes legacy .venv entry: {entry!r}. "
+                "Run: deactivate; source modelopt-test/_env_deploy.sh "
+                "or: bash modelopt-test/run_deploy.sh ..."
+            )
+    if expected:
+        expected_path = Path(expected).resolve()
+        if prefix != expected_path:
+            return (
+                f"sys.prefix={prefix} but MODELOPT_VENV={expected_path}. "
+                "Use: bash modelopt-test/run_deploy.sh (recommended) or "
+                f"{expected_path}/bin/python modelopt-test/deploy_trtllm.py ..."
+            )
+    elif ".venv-deploy" not in str(prefix):
+        return (
+            f"expected .venv-deploy (got sys.prefix={prefix}, executable={executable}). "
+            "Run: source modelopt-test/_env_deploy.sh "
+            "or: bash modelopt-test/run_deploy.sh ..."
+        )
+    return None
+
+
 def main() -> int:
+    venv_err = _assert_deploy_venv()
+    if venv_err:
+        print(f"ERROR: {venv_err}", file=sys.stderr)
+        return 1
+
     args = _parse_args()
     ckpt = Path(args.checkpoint_dir)
     if not ckpt.is_dir():
@@ -58,13 +97,15 @@ def main() -> int:
     print("=== Gate C: TensorRT-LLM deploy ===")
     print(f"checkpoint: {ckpt}")
     print(f"tp={args.tp} prompt={args.prompt!r}")
+    print(f"python: {sys.executable}")
+    print(f"sys.prefix: {sys.prefix}")
     print("quant summary:", json.dumps(_load_quant_summary(ckpt), indent=2))
 
     from modelopt.deploy.transformers_compat import apply_transformers_compat
 
     compat = apply_transformers_compat()
     if compat:
-        print("transformers runtime compat (install-time patch missing):", ", ".join(compat))
+        print("transformers runtime compat:", ", ".join(compat))
 
     quant_summary = _load_quant_summary(ckpt)
     if quant_summary.get("quant_algo") == "W4A8_AWQ":

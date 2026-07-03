@@ -18,9 +18,9 @@
 | Gate C (TRT-LLM deploy) | `.venv-deploy` | **4.57.3** | `bash setup_env_deploy.sh` |
 | **Contract** | checkpoint dir on NFS | — | Artifact crosses stages |
 
-Activate: `source modelopt-test/_env_quant.sh` or `_env_deploy.sh`.
+Activate: `source modelopt-test/_env_quant.sh` or `_env_deploy.sh`. Gate C: prefer `bash modelopt-test/run_deploy.sh`.
 
-Legacy single `.venv` + transformers 5.x patches on TRT-LLM is **deprecated** — use dual venv.
+Remove old single `.venv` after dual-venv setup: `bash modelopt-test/remove_legacy_venv.sh`.
 
 ### MoE layout sanity check (quant venv only)
 
@@ -266,8 +266,35 @@ source modelopt-test/_env_quant.sh
 bash modelopt-test/run_export_only.sh
 
 # Gate C (deploy venv)
-source modelopt-test/_env_deploy.sh
-python modelopt-test/deploy_trtllm.py \
+bash modelopt-test/run_deploy.sh \
+  --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
+  --tp 2 --prompt "The capital of France is"
+```
+
+---
+
+## Bug #8 — Deploy imports from stale `.venv` (exaone_moe / wrong transformers)
+
+### Symptoms
+
+Traceback shows packages under `Model-Optimizer/.venv/lib/...` (not `.venv-deploy`), e.g.:
+
+```
+ValueError: 'exaone_moe' is already used by a Transformers config
+```
+
+Shell prompt may still show `(.venv)` after `source _env_deploy.sh`.
+
+### Root cause
+
+Legacy single `.venv` on NFS had transformers 5.x + TRT-LLM; interactive shells kept stale `PATH` / `PYTHONPATH` and shadowed `.venv-deploy` site-packages.
+
+### Fix
+
+```bash
+deactivate 2>/dev/null || true
+bash modelopt-test/remove_legacy_venv.sh
+bash modelopt-test/run_deploy.sh \
   --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
   --tp 2 --prompt "The capital of France is"
 ```
@@ -293,30 +320,9 @@ When running `apply_trtllm_qwen_moe_patches()` or `deploy_trtllm.py` after upgra
 
 ### Fix
 
-**Long-term (team):** **Dual venv** — `.venv-quant` (transformers 5.x) + `.venv-deploy` (TRT-LLM + transformers 4.57.3). See `setup_env_quant.sh`, `setup_env_deploy.sh`, `_env_quant.sh`, `_env_deploy.sh`.
+**Fix:** **Dual venv only** — `.venv-quant` (transformers 5.x) + `.venv-deploy` (TRT-LLM + transformers 4.57.3). See `setup_env_quant.sh`, `setup_env_deploy.sh`, `run_deploy.sh`. Delete old `.venv`: `bash modelopt-test/remove_legacy_venv.sh`.
 
-**Deprecated:** single `.venv` with install-time TRT-LLM transformers-5 patches (`trtllm_transformers5_patch.py`) — only for legacy; do not extend.
-
-**Immediate workaround** (before pulling fix):
-
-```bash
-python -c "
-from modelopt.deploy.transformers_compat import apply_transformers_compat
-print(apply_transformers_compat())
-from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
-print(apply_trtllm_qwen_moe_patches())
-"
-```
-
-Or manual shim:
-
-```bash
-python -c "
-import transformers
-from transformers import AutoModelForImageTextToText
-transformers.AutoModelForVision2Seq = AutoModelForImageTextToText
-"
-```
+`trtllm_transformers5_patch.py` is **not used** in deploy venv — do not extend.
 
 ---
 

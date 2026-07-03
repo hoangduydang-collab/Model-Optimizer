@@ -22,12 +22,8 @@ case "${MODELOPT_PROFILE:-deploy}" in
     MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv-deploy}"
     SETUP_HINT="bash ${SCRIPT_DIR}/setup_env_deploy.sh"
     ;;
-  legacy)
-    MODELOPT_VENV="${MODELOPT_VENV:-${MODEL_OPT_REPO}/.venv}"
-    SETUP_HINT="bash ${SCRIPT_DIR}/setup_env.sh  # migrate to dual venv"
-    ;;
   *)
-    echo "ERROR: unknown MODELOPT_PROFILE=${MODELOPT_PROFILE} (use quant|deploy|legacy)" >&2
+    echo "ERROR: unknown MODELOPT_PROFILE=${MODELOPT_PROFILE} (use quant|deploy)" >&2
     exit 1
     ;;
 esac
@@ -40,8 +36,34 @@ if [[ ! -f "${MODELOPT_VENV}/bin/activate" ]]; then
   exit 1
 fi
 
+# Switching profiles in an interactive shell can leave stale PATH / PYTHONPATH entries.
+if [[ -n "${VIRTUAL_ENV:-}" && "${VIRTUAL_ENV}" != "${MODELOPT_VENV}" ]]; then
+  if type deactivate &>/dev/null; then
+    deactivate || true
+  fi
+  unset VIRTUAL_ENV
+fi
+
+_strip_other_modelopt_venvs_from_path() {
+  local entry cleaned=""
+  IFS=':' read -ra _path_parts <<< "${PATH}"
+  for entry in "${_path_parts[@]}"; do
+    if [[ "$entry" =~ /Model-Optimizer/\.venv(-quant|-deploy)?/bin$ || "$entry" == "${MODEL_OPT_REPO}/.venv/bin" ]] \
+      && [[ "$entry" != "${MODELOPT_VENV}/bin" ]]; then
+      continue
+    fi
+    cleaned="${cleaned:+$cleaned:}$entry"
+  done
+  export PATH="$cleaned"
+}
+
+_strip_other_modelopt_venvs_from_path
+
 # shellcheck disable=SC1091
 source "${MODELOPT_VENV}/bin/activate"
+
+# Editable modelopt only — do not append a session PYTHONPATH that may list another venv.
+export PYTHONPATH="${MODEL_OPT_REPO}"
 
 _export_nvidia_wheel_libs() {
   local py="${MODELOPT_VENV}/bin/python"

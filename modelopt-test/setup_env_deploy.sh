@@ -50,7 +50,7 @@ echo "=== pin transformers (TRT-LLM 1.2.x expects 4.57.3) ==="
 _pin_transformers_for_deploy
 
 echo "=== applying TRT-LLM W4A8_CUSTOM Qwen MoE patches ==="
-export PYTHONPATH="${MODEL_OPT_REPO}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="${MODEL_OPT_REPO}"
 python - <<'PY'
 from modelopt.deploy.trtllm_qwen_moe_patch import apply_trtllm_qwen_moe_patches
 

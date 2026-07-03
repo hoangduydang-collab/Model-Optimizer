@@ -17,6 +17,8 @@ Model-Optimizer/modelopt-test/
   run_export_only.sh
   inspect_ckpt.py
   deploy_trtllm.py
+  run_deploy.sh          # Gate C wrapper (uses .venv-deploy/bin/python)
+  remove_legacy_venv.sh  # delete old single .venv (one-time)
   upgrade_deploy_env.sh  # refresh deploy venv only
   slurm/quant.sbatch
   slurm/deploy.sbatch
@@ -65,7 +67,11 @@ source modelopt-test/_env_quant.sh   # quant / export
 source modelopt-test/_env_deploy.sh  # TRT-LLM deploy
 ```
 
-Legacy single `.venv` is deprecated (`MODELOPT_PROFILE=legacy source _env.sh`).
+Remove old single `.venv` after dual-venv setup (one-time):
+
+```bash
+bash modelopt-test/remove_legacy_venv.sh
+```
 
 ## Step 2 — Gate A: quantize (GPU, quant venv)
 
@@ -96,8 +102,17 @@ python modelopt-test/inspect_ckpt.py /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_
 ## Step 4 — Gate C: TensorRT-LLM deploy (deploy venv, 2 GPUs)
 
 ```bash
+bash modelopt-test/run_deploy.sh \
+  --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
+  --tp 2 \
+  --prompt "The capital of France is"
+```
+
+Or manually:
+
+```bash
 source modelopt-test/_env_deploy.sh
-python modelopt-test/deploy_trtllm.py \
+.venv-deploy/bin/python modelopt-test/deploy_trtllm.py \
   --checkpoint_dir /mnt/nfs/hoangduy/artifacts/modelopt_qwen3_w4a8_awq \
   --tp 2 \
   --prompt "The capital of France is"

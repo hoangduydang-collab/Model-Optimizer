@@ -18,6 +18,10 @@ def apply_transformers_compat() -> list[str]:
 
     import transformers
 
+    major = int(transformers.__version__.split(".")[0])
+    if major < 5:
+        return []
+
     applied: list[str] = []
 
     if not hasattr(transformers, "AutoModelForVision2Seq"):
