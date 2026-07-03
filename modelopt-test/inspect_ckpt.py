@@ -61,6 +61,8 @@ def _weight_shards_present(ckpt: Path) -> bool:
         return True
     return any(ckpt.glob("model-*.safetensors"))
 
+
+def _ignore_hits(ignore: list) -> dict[str, bool]:
     patterns = {
         "lm_head": r"lm_head",
         "moe_gate": r"mlp\.gate|router|block_sparse_moe\.gate",

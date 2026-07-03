@@ -47,4 +47,16 @@ PY
   fi
 }
 
+# TRT-LLM tp>1 uses mpi4py.futures; on some clusters Open MPI fabric autodetect hangs.
+_export_openmpi_localhost() {
+  export OMPI_MCA_oob="${OMPI_MCA_oob:-tcp}"
+  export OMPI_MCA_oob_tcp_if_include="${OMPI_MCA_oob_tcp_if_include:-lo}"
+  export OMPI_MCA_oob_tcp_peer_retries="${OMPI_MCA_oob_tcp_peer_retries:-60}"
+  export OMPI_MCA_oob_tcp_connect_sleep="${OMPI_MCA_oob_tcp_connect_sleep:-10}"
+  export OMPI_MCA_btl="${OMPI_MCA_btl:-self,vader,tcp}"
+  export OMPI_MCA_btl_tcp_if_include="${OMPI_MCA_btl_tcp_if_include:-lo}"
+  export OMPI_MCA_pml="${OMPI_MCA_pml:-ob1}"
+}
+
 _export_nvidia_wheel_libs
+_export_openmpi_localhost

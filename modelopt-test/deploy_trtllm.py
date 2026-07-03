@@ -11,6 +11,10 @@ import json
 import sys
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="TensorRT-LLM deploy smoke test for ModelOpt checkpoints")
@@ -55,6 +59,15 @@ def main() -> int:
     print(f"checkpoint: {ckpt}")
     print(f"tp={args.tp} prompt={args.prompt!r}")
     print("quant summary:", json.dumps(_load_quant_summary(ckpt), indent=2))
+
+    from trtllm_w4a8_moe_custom import prepare_checkpoint_and_runtime
+
+    try:
+        prepare_checkpoint_and_runtime(ckpt)
+        print("TRT-LLM W4A8_CUSTOM MoE prep: applied runtime patch + checkpoint rewrite")
+    except Exception as exc:
+        print(f"FAIL: W4A8_CUSTOM prep raised {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
 
     try:
         import torch

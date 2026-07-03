@@ -41,4 +41,10 @@ python hf_ptq.py \
 
 echo "=== Export-only DONE ==="
 echo "checkpoint: $EXPORT_PATH"
+
+if [[ "$QFORMAT" == "w4a8_awq" ]]; then
+  echo "Preparing checkpoint for TRT-LLM W4A8_CUSTOM MoE..."
+  python "${SCRIPT_DIR}/trtllm_w4a8_moe_custom.py" "$EXPORT_PATH"
+fi
+
 echo "Next: python ${SCRIPT_DIR}/inspect_ckpt.py $EXPORT_PATH"
