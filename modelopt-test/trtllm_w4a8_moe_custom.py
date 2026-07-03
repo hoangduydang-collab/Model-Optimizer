@@ -81,13 +81,83 @@ def _fuse_input_scale(input_scale: torch.Tensor, weight_scale_2: torch.Tensor) -
     return fused.to(dtype=input_scale.dtype)
 
 
-def _rewrite_state_dict(sd: dict[str, torch.Tensor]) -> tuple[dict[str, torch.Tensor], int]:
-    expert_prefixes: set[str] = set()
+def _max_tensors(*tensors: torch.Tensor) -> torch.Tensor:
+    result = tensors[0]
+    for tensor in tensors[1:]:
+        result = torch.max(result.float(), tensor.float()).to(dtype=result.dtype)
+    return result
+
+
+def _canonical_gate_up_input_scale(parts: dict[str, torch.Tensor]) -> torch.Tensor | None:
+    """Fuse gate/up input scales for TRT CUSTOM_W4A8 (matches VANILLA alpha math)."""
+    inputs = [parts[k] for k in ("gate_proj.input_scale", "up_proj.input_scale") if k in parts]
+    if not inputs:
+        return None
+    shared_input = _max_tensors(*inputs)
+    w2s = [parts[k] for k in ("gate_proj.weight_scale_2", "up_proj.weight_scale_2") if k in parts]
+    if not w2s:
+        return shared_input
+    return _fuse_input_scale(shared_input, _max_tensors(*w2s))
+
+
+def _canonical_down_input_scale(parts: dict[str, torch.Tensor]) -> torch.Tensor | None:
+    down_in = parts.get("down_proj.input_scale")
+    if down_in is None:
+        return None
+    down_w2 = parts.get("down_proj.weight_scale_2")
+    if down_w2 is None:
+        return down_in
+    return _fuse_input_scale(down_in, down_w2)
+
+
+def _gather_expert_scales(shard_paths: list[Path]) -> dict[str, dict[str, torch.Tensor]]:
+    """Collect per-expert scale tensors across all shards (scales are tiny)."""
+    tracked_suffixes = {
+        "gate_proj.input_scale",
+        "up_proj.input_scale",
+        "gate_proj.weight_scale_2",
+        "up_proj.weight_scale_2",
+        "down_proj.input_scale",
+        "down_proj.weight_scale_2",
+    }
+    gathered: dict[str, dict[str, torch.Tensor]] = {}
+    for shard_path in shard_paths:
+        with safe_open(str(shard_path), framework="pt") as fh:
+            for key in fh.keys():  # noqa: SIM118
+                match = _EXPERT_RE.match(key)
+                if match is None:
+                    continue
+                suffix = key[len(match.group("prefix")) + 1 :]
+                if suffix not in tracked_suffixes:
+                    continue
+                gathered.setdefault(match.group("prefix"), {})[suffix] = fh.get_tensor(key).clone()
+    return gathered
+
+
+def _build_canonical_input_scales(
+    gathered: dict[str, dict[str, torch.Tensor]],
+) -> dict[str, dict[str, torch.Tensor]]:
+    canonical: dict[str, dict[str, torch.Tensor]] = {}
+    for expert_prefix, parts in gathered.items():
+        entry: dict[str, torch.Tensor] = {}
+        gate_up = _canonical_gate_up_input_scale(parts)
+        if gate_up is not None:
+            entry["gate_proj.input_scale"] = gate_up
+            entry["up_proj.input_scale"] = gate_up
+        down = _canonical_down_input_scale(parts)
+        if down is not None:
+            entry["down_proj.input_scale"] = down
+        if entry:
+            canonical[expert_prefix] = entry
+    return canonical
+
+
+def _rewrite_state_dict(
+    sd: dict[str, torch.Tensor],
+    canonical_input_scales: dict[str, dict[str, torch.Tensor]],
+) -> tuple[dict[str, torch.Tensor], int]:
     proj_prefixes: set[str] = set()
     for key in sd:
-        expert_match = _EXPERT_RE.match(key)
-        if expert_match:
-            expert_prefixes.add(expert_match.group("prefix"))
         match = _EXPERT_PROJ_RE.match(key)
         if match:
             proj_prefixes.add(match.group("prefix"))
@@ -97,35 +167,19 @@ def _rewrite_state_dict(sd: dict[str, torch.Tensor]) -> tuple[dict[str, torch.Te
     drop_keys: list[str] = []
     add_keys: dict[str, torch.Tensor] = {}
 
-    for expert_prefix in sorted(expert_prefixes):
-        gate_in = f"{expert_prefix}.gate_proj.input_scale"
-        up_in = f"{expert_prefix}.up_proj.input_scale"
-        gate_w2 = f"{expert_prefix}.gate_proj.weight_scale_2"
-        up_w2 = f"{expert_prefix}.up_proj.weight_scale_2"
-        if gate_in in out and gate_w2 in out and up_w2 in out:
-            shared_input = out[gate_in]
-            if up_in in out:
-                shared_input = torch.max(shared_input.float(), out[up_in].float()).to(
-                    dtype=shared_input.dtype
-                )
-            w2_max = torch.max(out[gate_w2].float(), out[up_w2].float()).to(dtype=shared_input.dtype)
-            fused = (shared_input.float() * w2_max).to(dtype=shared_input.dtype)
-            if up_in in out and not torch.equal(out[up_in], fused):
-                out[up_in] = fused
+    for expert_prefix, canon_parts in canonical_input_scales.items():
+        for suffix, value in canon_parts.items():
+            key = f"{expert_prefix}.{suffix}"
+            if key not in out:
+                continue
+            canonical = value.clone()
+            if not torch.equal(out[key], canonical):
+                out[key] = canonical
                 changed += 1
-            if not torch.equal(out[gate_in], fused):
-                out[gate_in] = fused
-                changed += 1
-            drop_keys.extend([gate_w2, up_w2])
-
-        down_in = f"{expert_prefix}.down_proj.input_scale"
-        down_w2 = f"{expert_prefix}.down_proj.weight_scale_2"
-        if down_in in out and down_w2 in out:
-            fused_down = _fuse_input_scale(out[down_in], out[down_w2])
-            if not torch.equal(fused_down, out[down_in]):
-                out[down_in] = fused_down
-                changed += 1
-            drop_keys.append(down_w2)
+        for w2_suffix in ("gate_proj.weight_scale_2", "up_proj.weight_scale_2", "down_proj.weight_scale_2"):
+            w2_key = f"{expert_prefix}.{w2_suffix}"
+            if w2_key in out:
+                drop_keys.append(w2_key)
 
     for prefix in sorted(proj_prefixes):
         ws_key = f"{prefix}.weight_scale"
@@ -177,13 +231,16 @@ def rewrite_checkpoint_for_trtllm_w4a8_custom(
             index = json.load(fh)
     weight_map: dict[str, str] = dict((index or {}).get("weight_map") or {})
 
+    gathered = _gather_expert_scales(shard_paths)
+    canonical_input_scales = _build_canonical_input_scales(gathered)
+
     total_changed = 0
     for shard_path in shard_paths:
         with safe_open(str(shard_path), framework="pt") as fh:
             metadata = dict(fh.metadata() or {})
             sd = {k: fh.get_tensor(k).clone() for k in fh.keys()}  # noqa: SIM118
 
-        new_sd, changed = _rewrite_state_dict(sd)
+        new_sd, changed = _rewrite_state_dict(sd, canonical_input_scales)
         if changed:
             save_file(new_sd, str(shard_path), metadata=metadata)
             total_changed += changed
